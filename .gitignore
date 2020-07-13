@@ -45,3 +45,4 @@ out/
 smpl_model/*
 /load_from_gt.py
 /bareteeth.000001.26_C/
+/vgg_model/
