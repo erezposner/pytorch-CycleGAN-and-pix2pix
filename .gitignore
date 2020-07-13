@@ -42,3 +42,10 @@ test/data/legacy_serialized.pt
 *~
 .idea
 out/
+/bareteeth.000001.26_C/coma_2/correspondence.jpg
+/bareteeth.000001.26_C/minibatch_0_Netural_0/correspondence.jpg
+/bareteeth.000001.26_C/coma_2/correspondence_map.p
+/bareteeth.000001.26_C/minibatch_0_Netural_0/correspondence_map.p
+/bareteeth.000001.26_C/coma_2/flame_params.pkl
+/smpl_model/male_model.pkl
+/vgg_model/vgg19-dcbb9e9d.pth
