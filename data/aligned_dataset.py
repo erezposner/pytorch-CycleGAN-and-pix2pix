@@ -2,8 +2,36 @@ import os.path
 from data.base_dataset import BaseDataset, get_params, get_transform
 from data.image_folder import make_dataset
 from PIL import Image
+import pickle
+from pathlib import Path
+from torchvision import transforms
 
 
+def create_mask_from_white_background(A):
+    import numpy as np
+    import cv2
+    # im = Image.new(mode="RGB", size=A.size)
+    im = A.convert('RGBA')
+    data = np.array(im)
+
+    cv2.imwrite('out/t.png',
+                data.astype(np.uint8))
+    rgb = data
+
+    # color = [246, 213, 139]  # Original value
+    black = [0, 0, 0, 255]
+    white_offset = [245, 245, 245, 255]
+    white = [255, 255, 255, 255]
+    mask = np.all(rgb >= white_offset, axis=-1)
+    # # change all pixels that match color to white
+    data[mask] = black
+    data[~mask] = white
+    data = data[...,0]
+    # cv2.imwrite('out/t.png',
+    #             data.astype(np.uint8))
+    data = Image.fromarray(data)
+    data.save('out/true_mask.png')
+    return data
 class AlignedDataset(BaseDataset):
     """A dataset class for paired image dataset.
 
@@ -39,21 +67,38 @@ class AlignedDataset(BaseDataset):
         # read a image given a random integer index
         AB_path = self.AB_paths[index]
         AB = Image.open(AB_path).convert('RGB')
+        with open(str(Path(AB_path).parent / f'{Path(AB_path).stem}.pkl'), 'rb') as f:
+            metadata = pickle.load(f, encoding='latin1')
+        silh_im = Image.fromarray(metadata['true_silh'])
         # split AB image into A and B
         w, h = AB.size
         w2 = int(w / 2)
         A = AB.crop((0, 0, w2, h))
+        true_mask = create_mask_from_white_background(A)
         B = AB.crop((w2, 0, w, h))
+        if self.opt.constant_data:
+            B = Image.open(r'bareteeth.000001.26_C/coma_2/mesh.png').convert('RGB')#TODO remove
+        # C = AB.crop((2*w2, 0, w, h))
 
         # apply the same transform to both A and B
         transform_params = get_params(self.opt, A.size)
         A_transform = get_transform(self.opt, transform_params, grayscale=(self.input_nc == 1))
         B_transform = get_transform(self.opt, transform_params, grayscale=(self.output_nc == 1))
-
+        # C_transform = get_transform(self.opt, transform_params, grayscale=(self.output_nc == 1))
+        # from torchvision import transforms
+        # transforms.ToPILImage()(A.cpu()).save('a.png')
         A = A_transform(A)
         B = B_transform(B)
+        # C = C_transform(C)
+        osize = [self.opt.load_size, self.opt.load_size]
 
-        return {'A': A, 'B': B, 'A_paths': AB_path, 'B_paths': AB_path}
+        trn = transforms.Compose([transforms.Resize(osize, Image.BICUBIC) ,
+                          transforms.ToTensor()
+                          ])
+        silh_im = trn(silh_im)
+        true_mask = trn(true_mask)
+        # return {'A': A, 'B': B,'C': C, 'A_paths': AB_path, 'B_paths': AB_path, 'C_paths': AB_path}
+        return {'A': A, 'B': B, 'A_paths': AB_path, 'B_paths': AB_path, 'true_flame_params': metadata['true_flame_params'],'silh':silh_im,'true_mask':true_mask}
 
     def __len__(self):
         """Return the total number of images in the dataset."""

@@ -19,14 +19,23 @@ See training and test tips at: https://github.com/junyanz/pytorch-CycleGAN-and-p
 See frequently asked questions at: https://github.com/junyanz/pytorch-CycleGAN-and-pix2pix/blob/master/docs/qa.md
 """
 import time
+import os
+
+import torch
+from pytorch3d.io import save_obj
+import numpy as np
 from options.train_options import TrainOptions
 from data import create_dataset
 from models import create_model
 from util.visualizer import Visualizer
 
+# import os
+# os.seteuid(1000)
 # TODO don't forget to run container and run python -m visdom.server
 if __name__ == '__main__':
     opt = TrainOptions().parse()  # get training options
+    opt.no_flip = True
+    opt.serial_batches = True  # TODO change back when training
     dataset = create_dataset(opt)  # create a dataset given opt.dataset_mode and other options
     dataset_size = len(dataset)  # get the number of images in the dataset.
     print('The number of training images = %d' % dataset_size)
@@ -35,7 +44,7 @@ if __name__ == '__main__':
     model.setup(opt)  # regular setup: load and print networks; create schedulers
     visualizer = Visualizer(opt)  # create a visualizer that display/save images and plots
     total_iters = 0  # the total number of training iterations
-
+    torch.autograd.set_detect_anomaly(True)
     for epoch in range(opt.epoch_count,
                        opt.n_epochs + opt.n_epochs_decay + 1):  # outer loop for different epochs; we save the model by <epoch_count>, <epoch_count>+<save_latest_freq>
         epoch_start_time = time.time()  # timer for entire epoch
@@ -58,6 +67,13 @@ if __name__ == '__main__':
                 model.compute_visuals()
                 visualizer.display_current_results(model.get_current_visuals(), epoch, save_result)
 
+                final_obj = os.path.join(visualizer.img_dir, 'epoch%.3d_%s.obj' % (epoch, 'mesh'))
+                save_obj(final_obj, model.estimated_mesh.verts_packed(),
+                         torch.from_numpy(model.flamelayer.faces.astype(np.int32)),
+                         verts_uvs=model.estimated_mesh.textures.verts_uvs_packed(),
+                         texture_map=model.estimated_texture_map,
+                         faces_uvs=model.estimated_mesh.textures.faces_uvs_packed())
+
             if total_iters % opt.print_freq == 0:  # print training losses and save logging information to the disk
                 losses = model.get_current_losses()
                 t_comp = (time.time() - iter_start_time) / opt.batch_size
@@ -77,5 +93,5 @@ if __name__ == '__main__':
             model.save_networks(epoch)
 
         print('End of epoch %d / %d \t Time Taken: %d sec' % (
-        epoch, opt.n_epochs + opt.n_epochs_decay, time.time() - epoch_start_time))
+            epoch, opt.n_epochs + opt.n_epochs_decay, time.time() - epoch_start_time))
         model.update_learning_rate()  # update learning rates at the end of every epoch.

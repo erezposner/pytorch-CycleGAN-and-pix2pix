@@ -6,7 +6,6 @@ import time
 from . import util, html
 from subprocess import Popen, PIPE
 
-
 if sys.version_info[0] == 2:
     VisdomExceptionBase = Exception
 else:
@@ -105,7 +104,7 @@ class Visualizer():
         """
         if self.display_id > 0:  # show images in the browser using visdom
             ncols = self.ncols
-            if ncols > 0:        # show all the images in one visdom panel
+            if ncols > 0:  # show all the images in one visdom panel
                 ncols = min(ncols, len(visuals))
                 h, w = next(iter(visuals.values())).shape[:2]
                 table_css = """<style>
@@ -121,6 +120,9 @@ class Visualizer():
                 for label, image in visuals.items():
                     image_numpy = util.tensor2im(image)
                     label_html_row += '<td>%s</td>' % label
+                    from PIL import Image
+
+                    Image.fromarray(image_numpy).save(f'out/{label}.png')
                     images.append(image_numpy.transpose([2, 0, 1]))
                     idx += 1
                     if idx % ncols == 0:
@@ -142,7 +144,7 @@ class Visualizer():
                 except VisdomExceptionBase:
                     self.create_visdom_connections()
 
-            else:     # show each image in a separate visdom panel;
+            else:  # show each image in a separate visdom panel;
                 idx = 1
                 try:
                     for label, image in visuals.items():
