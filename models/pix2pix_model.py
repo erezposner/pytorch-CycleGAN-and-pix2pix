@@ -12,10 +12,15 @@ from types import SimpleNamespace
 from torchvision.transforms import transforms
 from PIL import Image
 from pathlib import Path
+
+from .face_part_seg.FacePartSegmentation import FacePartSegmentation
+# from .face_part_seg.model import BiSeNet
+# from .face_part_seg.test_face_seg import vis_parsing_maps
 from .mesh_making import make_mesh
 import pickle
 import cv2
 import os
+import torch.nn.functional as F
 
 
 class Pix2PixModel(BaseModel):
@@ -49,9 +54,9 @@ class Pix2PixModel(BaseModel):
         if is_train:
             parser.set_defaults(pool_size=0, gan_mode='vanilla')
             parser.add_argument('--lambda_L1', type=float, default=100.0, help='weight for L1 loss')
-            parser.add_argument('--lambda_silhouette', type=float, default=1e-6,
+            parser.add_argument('--lambda_silhouette', type=float, default=1e-5,
                                 help='weight for silhouette loss')
-            parser.add_argument('--lambda_flame_regularizer', type=float, default=5000.0,
+            parser.add_argument('--lambda_flame_regularizer', type=float, default=100.0,
                                 help='weight for flame regularizer loss')
 
         return parser
@@ -69,6 +74,7 @@ class Pix2PixModel(BaseModel):
         self.flamelayer.cuda()
         # config.use_3D_translation = True  # could be removed, depending on the camera model
         # config.use_face_contour = False
+        self.face_parts_segmentation = FacePartSegmentation(self.device)
 
         # specify the training losses you want to print out. The training/test scripts will call <BaseModel.get_current_losses>
         # self.loss_names = ['G_GAN', 'G_L1', 'D_real', 'D_fake']
@@ -81,8 +87,18 @@ class Pix2PixModel(BaseModel):
             self.model_names = ['G', 'D']
         else:  # during test time, only load G
             self.model_names = ['G']
+
+        # initialize flame parameters
+        self.shape_params_size = 300
+        self.expression_params_size = 100
+        self.neck_pose_params_size = 3
+        self.jaw_pose_size = 3
+        self.global_rot_size = 3
+        self.transl_size = 3
+        self.eyball_pose_size = 6
         # define networks (both generator and discriminator)
-        self.netG = networks.define_G(opt.input_nc, opt.output_nc, opt.ngf, opt.netG, opt.norm,
+        # TODO  opt.output_nc instead of 2 if generating images
+        self.netG = networks.define_G(opt.input_nc, 3, opt.ngf, opt.netG, opt.norm,
                                       not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids)
         self.netF = networks.define_F(opt.input_nc, opt.output_flame_params, opt.ngf, opt.netG, opt.norm,
                                       not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids)
@@ -98,8 +114,13 @@ class Pix2PixModel(BaseModel):
             self.criterionBCE = torch.nn.BCELoss(reduction='none')
 
             # initialize optimizers; schedulers will be automatically created by function <BaseModel.setup>.
+            self.global_shape = torch.nn.Parameter(torch.randn((1, 1, self.shape_params_size)).to(self.device),
+                                                   requires_grad=True)
+
             self.optimizer_G = torch.optim.Adam(self.netG.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
-            self.optimizer_F = torch.optim.Adam(self.netF.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
+            # self.optimizer_F = torch.optim.Adam(self.netF.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
+            self.optimizer_F = torch.optim.Adam(list(self.netF.parameters()) + [self.global_shape], lr=opt.lr,
+                                                betas=(opt.beta1, 0.999))
             self.optimizer_D = torch.optim.Adam(self.netD.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
             self.optimizers.append(self.optimizer_G)
             self.optimizers.append(self.optimizer_D)
@@ -181,63 +202,59 @@ class Pix2PixModel(BaseModel):
         self.image_paths = input['A_paths' if AtoB else 'B_paths']
 
     def create_geo_from_flame_params(self, flame_param, base_flame_params=None, use_fix_params=False):
-        scale = 0.00001
+        scale = 0.0001
         # scale = 10
-        shape_params_size = 300
-        expression_params_size = 100
-        neck_pose_params_size = 3
-        jaw_pose_size = 3
-        global_rot_size = 3
-        transl_size = 3
-        eyball_pose_size = 6
+
         if base_flame_params is None:
             base_flame_params = {}
-            base_flame_params['shape_params'] = torch.zeros((1, 1, shape_params_size)).cuda()
-            base_flame_params['neck_pose_params'] = torch.zeros((1, 1, neck_pose_params_size)).cuda()
-            base_flame_params['jaw_pose'] = torch.zeros((1, 1, jaw_pose_size)).cuda()
-            base_flame_params['global_rot'] = torch.zeros((1, 1, global_rot_size)).cuda()
-            base_flame_params['transl'] = torch.zeros((1, 1, transl_size)).cuda()
+            base_flame_params['shape_params'] = torch.zeros((1, 1, self.shape_params_size)).cuda()
+            base_flame_params['expression_params'] = torch.zeros((1, 1, self.expression_params_size)).cuda()
+            base_flame_params['neck_pose_params'] = torch.zeros((1, 1, self.neck_pose_params_size)).cuda()
+            base_flame_params['jaw_pose'] = torch.zeros((1, 1, self.jaw_pose_size)).cuda()
+            base_flame_params['global_rot'] = torch.zeros((1, 1, self.global_rot_size)).cuda()
+            base_flame_params['transl'] = torch.zeros((1, 1, self.transl_size)).cuda()
 
         if use_fix_params:
             flame_param = torch.zeros((1, 418)).cuda()
         # Creating a batch of mean shapes
-        # shape_params = torch.zeros((flame_param.shape[0], shape_params_size)).cuda()
         ind = 0
         # if use_fix_params:
         #     flame_param[:, ind:shape_params_size] = data['shape_params']
-        self.shape_params = flame_param[:, ind:shape_params_size] + base_flame_params['shape_params'][0]
-        ind += shape_params_size
+        self.shape_params = flame_param[:, ind:self.shape_params_size] + base_flame_params['shape_params'][0]
+        ind += self.shape_params_size
         # if use_fix_params:
         # flame_param[:, ind:ind + expression_params_size] = data['expression_params']
-        self.expression_params = flame_param[:, ind:ind + expression_params_size] + base_flame_params[
-            'expression_params'][0]
-        ind += expression_params_size
+        self.expression_params = flame_param[:, ind:ind + self.expression_params_size] + \
+                                 base_flame_params['expression_params'][0]
+        # self.expression_params =  base_flame_params['expression_params'][0]
+        ind += self.expression_params_size
         # if use_fix_params:
         # flame_param[:, ind:ind + neck_pose_params_size] = data['neck_pose_params']
-        self.neck_pose = flame_param[:, ind:ind + neck_pose_params_size] + base_flame_params['neck_pose_params'][0]
-        ind += neck_pose_params_size
+        self.neck_pose = flame_param[:, ind:ind + self.neck_pose_params_size] + base_flame_params['neck_pose_params'][0]
+        ind += self.neck_pose_params_size
         # if use_fix_params:
         #     flame_param[:, ind:ind + jaw_pose_size] = data['jaw_pose']
-        self.jaw_pose = flame_param[:, ind:ind + jaw_pose_size] + base_flame_params['jaw_pose'][0]
-        ind += jaw_pose_size
+        self.jaw_pose = flame_param[:, ind:ind + self.jaw_pose_size] + base_flame_params['jaw_pose'][0]
+        # self.jaw_pose =  base_flame_params['jaw_pose'][0]
+        ind += self.jaw_pose_size
         # if use_fix_params:
         #     flame_param[:, ind:ind + global_rot_size] = data['global_rot']
-        global_rot = flame_param[:, ind:ind + global_rot_size] * scale + base_flame_params['global_rot'][0]
+        global_rot = flame_param[:, ind:ind + self.global_rot_size] * scale + base_flame_params['global_rot'][0]
         # global_rot = global_rot.clamp(-1, 1)  # TODO check clamp rotation
 
-        ind += global_rot_size
+        ind += self.global_rot_size
 
         self.pose_params = torch.cat([global_rot, self.jaw_pose], dim=1)
         # if use_fix_params:
         #     flame_param[:, ind:ind + transl_size] = data['transl']
-        self.transl = flame_param[:, ind:ind + transl_size] * scale + base_flame_params['transl'][0]
+        self.transl = flame_param[:, ind:ind + self.transl_size] * scale + base_flame_params['transl'][0]
 
         # self.transl = self.transl.clamp(-.3, .3)  # TODO check clamp translation
-        ind += transl_size
-        self.eyball_pose = flame_param[:, ind:ind + eyball_pose_size]
-        ind += eyball_pose_size
-
-        vertices = self.flamelayer(shape_params=self.shape_params, expression_params=self.expression_params,
+        ind += self.transl_size
+        self.eyball_pose = flame_param[:, ind:ind + self.eyball_pose_size]
+        ind += self.eyball_pose_size
+        vertices = self.flamelayer(shape_params=self.global_shape[0], expression_params=self.expression_params,
+                                   # vertices = self.flamelayer(shape_params=self.shape_params, expression_params=self.expression_params,
                                    pose_params=self.pose_params, neck_pose=self.neck_pose, transl=self.transl,
                                    eye_pose=self.eyball_pose)
         return vertices
@@ -292,12 +309,22 @@ class Pix2PixModel(BaseModel):
     def forward(self):
         """Run forward pass; called by both functions <optimize_parameters> and <test>."""
         if True:
-            self.fake_Texture = self.netG(self.real_A)  # RefinedTextureMap = G(TextureMap)
-
+            self.uvs = self.netG(self.real_A)  # RefinedTextureMap = G(TextureMap)
+            use_uvs = False
+            if use_uvs:  # don't forget to set net output channels to 2
+                # region use displacement with inital guess that is 0
+                yv, xv = torch.meshgrid([torch.arange(0, self.real_A.shape[3]), torch.arange(0, self.real_A.shape[2])])
+                xv = xv.unsqueeze(0).unsqueeze(0) / 127.5 - 1
+                yv = yv.unsqueeze(0).unsqueeze(0) / 127.5 - 1
+                uvs_init = torch.cat((xv, yv), 1).permute(0, 2, 3, 1).to(self.device)
+                self.fake_Texture = F.grid_sample(self.real_A, uvs_init + self.uvs.permute(0, 2, 3, 1) / 10)
+            else:
+                self.fake_Texture = self.uvs
+            # endregion
             # aaa = 255 * (
             #         self.real_A * 0.5 + 0.5)
             # self.fake_B = self.project_to_image_plane(self.fake_geo_from_flame, aaa
-            #                                           )  # TODO Test self.fake_Texture instead of self.A
+            #                                           )
             # cv2.imwrite('out/t.png',
             #             (self.fake_B.detach().cpu().squeeze().permute(1, 2, 0).numpy()).astype(np.uint8))
             # torch.autograd.set_detect_anomaly(True)
@@ -309,8 +336,9 @@ class Pix2PixModel(BaseModel):
                         self.fake_flame = data
 
             zero_out_estimated_texture_map = False
-            self.fake_geo_from_flame = self.create_geo_from_flame_params(self.fake_flame, self.true_flame_params,
-                                                                         zero_out_estimated_texture_map)
+            self.fake_geo_from_flame = self.create_geo_from_flame_params(self.fake_flame,
+                                                                         base_flame_params=self.true_flame_params,
+                                                                         use_fix_params=zero_out_estimated_texture_map)
 
             # self.fake_B = self.project_to_image_plane(self.fake_geo_from_flame, self.UnNormalize(self.real_A))
             self.fake_B, self.fake_B_silhouette = self.project_to_image_plane(self.fake_geo_from_flame,
@@ -373,13 +401,12 @@ class Pix2PixModel(BaseModel):
         self.loss_G_GAN = self.criterionGAN(pred_fake, True)
         # Second, G(A) = B
 
-        self.loss_G_L1_reducted = self.criterionL1(self.fake_B, self.real_B) * self.rect_mask * self.true_mask
+        self.loss_G_L1_reducted = self.criterionL1(self.fake_B, self.real_B) * self.rect_mask
         self.loss_G_L1 = self.loss_G_L1_reducted.abs().mean() * self.opt.lambda_L1
         # image_pil = transforms.ToPILImage()(self.loss_G_L1[0].cpu())
         # image_pil.save('out/s.png')
 
         self.loss_F_Reg = self.flame_regularizer_loss(self.fake_geo_from_flame) * self.opt.lambda_flame_regularizer
-
         # silhouette loss
         self.loss_silhouette = self.rect_mask.squeeze()[0] * self.criterionBCE(
             self.rect_mask.squeeze()[0] * self.fake_B_silhouette.squeeze(),
@@ -387,18 +414,36 @@ class Pix2PixModel(BaseModel):
         image_pil = transforms.ToPILImage()(255 * self.loss_silhouette.cpu())
         image_pil.save('out/loss_silhouette.png')
         self.loss_silhouette = self.loss_silhouette.sum() * self.opt.lambda_silhouette
-        # print(self.loss_silhouette.mean())
-        # self.loss_silhouette *= 0  # 1e-6
+
         # combine loss and calculate gradients
-        self.loss_G = self.loss_G_GAN + self.loss_G_L1 + self.loss_F_Reg  # + self.loss_silhouette
+        self.loss_G = self.loss_G_GAN + self.loss_G_L1 + self.loss_F_Reg + self.loss_silhouette
         # self.loss_silhouette = self.loss_silhouette.repeat(3, 1, 1).permute(1,2,0)
         self.loss_G.backward()
+
+    def compute_second_try(self, real, fake, respth='./out'):
+
+        real_un = self.UnNormalize(real).squeeze()
+        tt = transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+        real_un = F.interpolate(real_un.unsqueeze(0), (512, 512))
+        img = tt(real_un.squeeze()).unsqueeze(0)
+
+        with torch.no_grad():
+            out = self.face_parts_segmentation(img)
+            parsing = out.squeeze(0).cpu().numpy().argmax(0)
+            # print(parsing)
+            print(np.unique(parsing))
+            image = transforms.ToPILImage()(self.UnNormalize(real).squeeze().detach().cpu()).resize((512, 512),
+                                                                                                    Image.BILINEAR)
+            self.face_parts_segmentation.vis_parsing_maps(image, parsing, stride=1, save_im=True,
+                                                          save_path='out/seg.png')
 
     def optimize_parameters(self):
         self.forward()  # compute fake images: G(Texture) and G(Flame)
         # update D
         self.rect_mask = torch.zeros(self.fake_B.shape).cuda()
         self.rect_mask[..., 0:195, 40:200] = 1
+        # self.compute_second_try(self.real_B, self.fake_B)
+
         self.fake_B = self.Normalize(self.UnNormalize(self.fake_B) * self.rect_mask)
         self.real_B = self.Normalize(self.UnNormalize(self.real_B) * self.rect_mask)
         # self.mask = self.mask * self.true_mask
@@ -411,6 +456,7 @@ class Pix2PixModel(BaseModel):
         self.set_requires_grad(self.netD, False)  # D requires no gradients when optimizing G
         self.optimizer_G.zero_grad()  # set G's gradients to zero
         self.optimizer_F.zero_grad()  # set F's gradients to zero
+
         self.backward_G()  # calculate graidents for G
         self.optimizer_G.step()  # udpate G's weights
         self.optimizer_F.step()  # udpate F's weights
