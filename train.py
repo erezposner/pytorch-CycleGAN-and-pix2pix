@@ -66,14 +66,15 @@ if __name__ == '__main__':
                 save_result = total_iters % opt.update_html_freq == 0
                 model.compute_visuals()
                 visualizer.display_current_results(model.get_current_visuals(), epoch, save_result)
-
-                final_obj = os.path.join(visualizer.img_dir, 'epoch%.3d_%s.obj' % (epoch, 'mesh'))
-                save_obj(final_obj, model.estimated_mesh.verts_packed(),
-                         torch.from_numpy(model.flamelayer.faces.astype(np.int32)),
-                         verts_uvs=model.estimated_mesh.textures.verts_uvs_packed(),
-                         texture_map=model.estimated_texture_map,
-                         faces_uvs=model.estimated_mesh.textures.faces_uvs_packed())
-
+                try:
+                    final_obj = os.path.join(visualizer.img_dir, 'epoch%.3d_%s.obj' % (epoch, 'mesh'))
+                    save_obj(final_obj, model.estimated_mesh.verts_packed(),
+                             torch.from_numpy(model.flamelayer.faces.astype(np.int32)),
+                             verts_uvs=model.estimated_mesh.textures.verts_uvs_packed(),
+                             texture_map=model.estimated_texture_map,
+                             faces_uvs=model.estimated_mesh.textures.faces_uvs_packed())
+                except:
+                    pass
             if total_iters % opt.print_freq == 0:  # print training losses and save logging information to the disk
                 losses = model.get_current_losses()
                 t_comp = (time.time() - iter_start_time) / opt.batch_size
