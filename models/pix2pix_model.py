@@ -56,7 +56,9 @@ class Pix2PixModel(BaseModel):
             parser.add_argument('--lambda_L1', type=float, default=100.0, help='weight for L1 loss')
             parser.add_argument('--lambda_silhouette', type=float, default=1e-5,
                                 help='weight for silhouette loss')
-            parser.add_argument('--lambda_flame_regularizer', type=float, default=100.0,
+            parser.add_argument('--lambda_face_seg', type=float, default=1,
+                                help='weight for face parts segmentation loss')
+            parser.add_argument('--lambda_flame_regularizer', type=float, default=500.0,  # 100.0
                                 help='weight for flame regularizer loss')
 
         return parser
@@ -78,7 +80,7 @@ class Pix2PixModel(BaseModel):
 
         # specify the training losses you want to print out. The training/test scripts will call <BaseModel.get_current_losses>
         # self.loss_names = ['G_GAN', 'G_L1', 'D_real', 'D_fake']
-        self.loss_names = ['G_GAN', 'G_L1', 'D_real', 'D_fake', 'silhouette']
+        self.loss_names = ['G_GAN', 'G_L1', 'D_real', 'D_fake', 'silhouette', 'face_part_segmentation']
         # specify the images you want to save/display. The training/test scripts will call <BaseModel.get_current_visuals>
         # self.visual_names = ['real_A', 'fake_Texture', 'fake_B', 'real_B','loss_G_L1_reducted']
         self.visual_names = ['fake_Texture', 'fake_B', 'real_B', 'loss_G_L1_reducted']
@@ -109,8 +111,10 @@ class Pix2PixModel(BaseModel):
 
         if self.isTrain:
             # define loss functions
-            self.criterionGAN = networks.GANLoss(opt.gan_mode).to(self.device)
+            self.criterionGAN = networks.GANLoss(opt.gan_mode, soft_labels=self.opt.soft_labels).to(self.device)
             self.criterionL1 = torch.nn.L1Loss(reduction='none')
+            self.CrossEntropyCriterion = torch.nn.CrossEntropyLoss()
+
             self.criterionBCE = torch.nn.BCELoss(reduction='none')
 
             # initialize optimizers; schedulers will be automatically created by function <BaseModel.setup>.
@@ -135,6 +139,13 @@ class Pix2PixModel(BaseModel):
         R, T = look_at_view_transform(distance, 0, 0)
         cameras = OpenGLPerspectiveCameras(device=self.device, R=R, T=T)
         raster_settings = RasterizationSettings(
+            image_size=256,
+            blur_radius=0.0,
+            faces_per_pixel=1,
+            perspective_correct=True,
+            cull_backfaces=True
+        )
+        silhouette_raster_settings = RasterizationSettings(
             image_size=256,
             blur_radius=0.0,
             faces_per_pixel=1,
@@ -169,6 +180,13 @@ class Pix2PixModel(BaseModel):
 
         # Create a silhouette mesh renderer by composing a rasterizer and a shader.
         self.silhouette_renderer = MeshRenderer(
+            rasterizer=MeshRasterizer(
+                cameras=cameras,
+                raster_settings=silhouette_raster_settings
+            ),
+            shader=SoftSilhouetteShader(blend_params=BlendParams(sigma=1e-10, gamma=1e-4))
+        )
+        self.negative_silhouette_renderer = MeshRenderer(
             rasterizer=MeshRasterizer(
                 cameras=cameras,
                 raster_settings=raster_settings
@@ -288,17 +306,18 @@ class Pix2PixModel(BaseModel):
 
         images = self.renderer(self.estimated_mesh, materials=self.materials)
         silhouette_images = self.silhouette_renderer(self.estimated_mesh, materials=self.materials)[..., 3].unsqueeze(0)
+        negative_silhouette_images = self.negative_silhouette_renderer(self.estimated_mesh, materials=self.materials)[..., 3].unsqueeze(0)
         transforms.ToPILImage()(silhouette_images
                                 .squeeze().permute(0, 1).cpu()).save('out/silhouette.png')
         # transforms.ToPILImage()(images
         #                         .squeeze().permute(2, 0, 1).cpu()).save('out/img.png')
-
+        cull_backfaces_mask =  (1-(silhouette_images- negative_silhouette_images).abs())
         img = (images[0][..., :3].detach().cpu().numpy() * 255).astype(np.uint8)
         Image.fromarray(img).save('out/test1.png')
         images = self.Normalize(images)
         silhouette_images = silhouette_images.clamp(0, 1)
 
-        return images[..., :3].permute(0, 3, 1, 2), silhouette_images
+        return images[..., :3].permute(0, 3, 1, 2), silhouette_images,cull_backfaces_mask
 
     def UnNormalize(self, img):
         return img * 0.5 + 0.5
@@ -341,11 +360,13 @@ class Pix2PixModel(BaseModel):
                                                                          use_fix_params=zero_out_estimated_texture_map)
 
             # self.fake_B = self.project_to_image_plane(self.fake_geo_from_flame, self.UnNormalize(self.real_A))
-            self.fake_B, self.fake_B_silhouette = self.project_to_image_plane(self.fake_geo_from_flame,
+            self.fake_B, self.fake_B_silhouette ,self.cull_backfaces_mask= self.project_to_image_plane(self.fake_geo_from_flame,
                                                                               self.UnNormalize(self.fake_Texture))
         else:
             self.fake_B = self.netG(self.real_A)  # G(Texture)
-
+        # with torch.no_grad(): #TODO check test or remove
+            # self.fake_B = self.fake_B * self.cull_backfaces_mask
+            # self.real_B = self.real_B * self.cull_backfaces_mask
         # eventually should produce self.fake_B
 
     def set_default_weights(self):
@@ -401,7 +422,7 @@ class Pix2PixModel(BaseModel):
         self.loss_G_GAN = self.criterionGAN(pred_fake, True)
         # Second, G(A) = B
 
-        self.loss_G_L1_reducted = self.criterionL1(self.fake_B, self.real_B) * self.rect_mask
+        self.loss_G_L1_reducted = self.criterionL1(self.fake_B, self.real_B) * self.rect_mask #* self.cull_backfaces_mask
         self.loss_G_L1 = self.loss_G_L1_reducted.abs().mean() * self.opt.lambda_L1
         # image_pil = transforms.ToPILImage()(self.loss_G_L1[0].cpu())
         # image_pil.save('out/s.png')
@@ -415,37 +436,50 @@ class Pix2PixModel(BaseModel):
         image_pil.save('out/loss_silhouette.png')
         self.loss_silhouette = self.loss_silhouette.sum() * self.opt.lambda_silhouette
 
+        self.loss_face_part_segmentation = self.CrossEntropyCriterion(self.fake_B_seg,
+                                                                      self.real_B_seg.long()) * self.opt.lambda_face_seg
+
         # combine loss and calculate gradients
-        self.loss_G = self.loss_G_GAN + self.loss_G_L1 + self.loss_F_Reg + self.loss_silhouette
+        self.loss_G = self.loss_G_GAN + self.loss_G_L1 + self.loss_F_Reg   + self.loss_silhouette  # + self.loss_face_part_segmentation
         # self.loss_silhouette = self.loss_silhouette.repeat(3, 1, 1).permute(1,2,0)
         self.loss_G.backward()
 
-    def compute_second_try(self, real, fake, respth='./out'):
+    def perform_face_part_segmentation(self, input_img, fname='seg'):
 
-        real_un = self.UnNormalize(real).squeeze()
+        real_un = self.UnNormalize(input_img).squeeze()
         tt = transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
         real_un = F.interpolate(real_un.unsqueeze(0), (512, 512))
         img = tt(real_un.squeeze()).unsqueeze(0)
 
-        with torch.no_grad():
-            out = self.face_parts_segmentation(img)
-            parsing = out.squeeze(0).cpu().numpy().argmax(0)
-            # print(parsing)
-            print(np.unique(parsing))
-            image = transforms.ToPILImage()(self.UnNormalize(real).squeeze().detach().cpu()).resize((512, 512),
-                                                                                                    Image.BILINEAR)
+        # with torch.no_grad():
+        out = self.face_parts_segmentation(img)
+        parsing = out.squeeze(0).detach().cpu().numpy().argmax(0)
+        # print(parsing)
+        visualize = True  # TODO
+        if visualize:
+            # print(np.unique(parsing))
+            image = transforms.ToPILImage()(self.UnNormalize(input_img).squeeze().detach().cpu()).resize((512, 512),
+                                                                                                         Image.BILINEAR)
             self.face_parts_segmentation.vis_parsing_maps(image, parsing, stride=1, save_im=True,
-                                                          save_path='out/seg.png')
+                                                          save_path=f'out/{fname}.png')
+        out = F.interpolate(out, (256, 256))
+        parsing_tensor = torch.argmax(out, dim=1)
+
+        return out, parsing_tensor
 
     def optimize_parameters(self):
         self.forward()  # compute fake images: G(Texture) and G(Flame)
         # update D
         self.rect_mask = torch.zeros(self.fake_B.shape).cuda()
         self.rect_mask[..., 0:195, 40:200] = 1
-        # self.compute_second_try(self.real_B, self.fake_B)
+        _, self.real_B_seg = self.perform_face_part_segmentation(self.real_B, fname='real_B_seg')
+        self.fake_B_seg, _ = self.perform_face_part_segmentation(self.fake_B, fname='fake_B_seg')
 
         self.fake_B = self.Normalize(self.UnNormalize(self.fake_B) * self.rect_mask)
         self.real_B = self.Normalize(self.UnNormalize(self.real_B) * self.rect_mask)
+
+        self.real_B_seg = self.real_B_seg * self.rect_mask[:, 0, ...]
+        self.fake_B_seg = self.fake_B_seg * self.rect_mask[:, 0, ...]
         # self.mask = self.mask * self.true_mask
 
         self.set_requires_grad(self.netD, True)  # enable backprop for D
@@ -453,6 +487,7 @@ class Pix2PixModel(BaseModel):
         self.backward_D()  # calculate gradients for D
         self.optimizer_D.step()  # update D's weights
         # update G
+
         self.set_requires_grad(self.netD, False)  # D requires no gradients when optimizing G
         self.optimizer_G.zero_grad()  # set G's gradients to zero
         self.optimizer_F.zero_grad()  # set F's gradients to zero
