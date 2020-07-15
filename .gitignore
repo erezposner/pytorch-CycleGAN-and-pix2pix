@@ -43,9 +43,8 @@ test/data/legacy_serialized.pt
 .idea
 out/
 smpl_model/*
-/load_from_gt.py
+/scripts/load_from_gt.py
 /bareteeth.000001.26_C/
 /vgg_model/
-/dels.py
 /models/face_part_seg/data/
 /models/face_part_seg/res/
