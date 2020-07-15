@@ -229,7 +229,7 @@ class GANLoss(nn.Module):
     that has the same size as the input.
     """
 
-    def __init__(self, gan_mode, target_real_label=1.0, target_fake_label=0.0):
+    def __init__(self, gan_mode, target_real_label=1.0, target_fake_label=0.0, soft_labels=0.2):
         """ Initialize the GANLoss class.
 
         Parameters:
@@ -241,6 +241,7 @@ class GANLoss(nn.Module):
         LSGAN needs no sigmoid. vanilla GANs will handle it with BCEWithLogitsLoss.
         """
         super(GANLoss, self).__init__()
+        self.soft_labels = soft_labels
         self.register_buffer('real_label', torch.tensor(target_real_label))
         self.register_buffer('fake_label', torch.tensor(target_fake_label))
         self.gan_mode = gan_mode
@@ -253,7 +254,7 @@ class GANLoss(nn.Module):
         else:
             raise NotImplementedError('gan mode %s not implemented' % gan_mode)
 
-    def get_target_tensor(self, prediction, target_is_real):
+    def get_target_tensor(self, prediction, target_is_real, device='cuda'):
         """Create label tensors with the same size as the input.
 
         Parameters:
@@ -265,9 +266,9 @@ class GANLoss(nn.Module):
         """
 
         if target_is_real:
-            target_tensor = self.real_label
+            target_tensor = self.real_label - torch.rand(1).to(device) * self.soft_labels
         else:
-            target_tensor = self.fake_label
+            target_tensor = self.fake_label + torch.rand(1).to(device) * self.soft_labels
         return target_tensor.expand_as(prediction)
 
     def __call__(self, prediction, target_is_real):
