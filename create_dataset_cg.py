@@ -7,7 +7,9 @@ import shutil
 def get_all_samples_from_cg_ds(ds_path):
     paths = sorted(Path(ds_path).rglob("features"))
     return paths
-#TODO bind volume of dataset to /opt/data in settings
+
+
+# TODO bind volume of dataset to /opt/data in settings
 
 dataset_path = Path('/opt/data/Subject 1')
 # samples = glob.glob(str(dataset_path / '*'))
@@ -23,7 +25,7 @@ for mode in modes:
     output_A_folder.mkdir(parents=True, exist_ok=True)
     output_B_folder.mkdir(parents=True, exist_ok=True)
     output_C_folder.mkdir(parents=True, exist_ok=True)
-for ind,sample in enumerate(samples):
+for ind, sample in enumerate(samples):
     mode = modes[np.random.randint(0, 3)]
     output_A_folder = (dataset_output_path / 'A' / mode)
     output_B_folder = (dataset_output_path / 'B' / mode)
@@ -31,8 +33,9 @@ for ind,sample in enumerate(samples):
     shutil.copy(str(Path(sample) / 'original.jpg'), str(Path(output_A_folder) / (f'{ind:04d}' + '.jpg')))
     shutil.copy(str(Path(sample) / 'rendered.jpg'), str(Path(output_B_folder) / (f'{ind:04d}' + '.jpg')))
     shutil.copy(str(Path(sample) / 'mesh.png'), str(Path(output_C_folder) / (f'{ind:04d}' + '.jpg')))
-    shutil.copy(str(Path(sample) / 'flame_params.pkl'), str(Path(output_C_folder) / (f'{ind:04d}'+ '_flame_params.pkl')))
-    shutil.copy(str(Path(sample) / 'silh.jpg'), str(Path(output_C_folder) / (f'{ind:04d}'+ '_silh.jpg')))
+    shutil.copy(str(Path(sample) / 'flame_params.pkl'),
+                str(Path(output_C_folder) / (f'{ind:04d}' + '_flame_params.pkl')))
+    shutil.copy(str(Path(sample) / 'silh.jpg'), str(Path(output_C_folder) / (f'{ind:04d}' + '_silh.jpg')))
     # shutil.copy(str(Path(sample) / 'original.jpg'), str(Path(output_A_folder) / (f'{ind:04d}_'+Path(sample).stem + '.jpg')))
     # shutil.copy(str(Path(sample) / 'rendered.jpg'), str(Path(output_B_folder) / (f'{ind:04d}_'+Path(sample).stem + '.jpg')))
     # shutil.copy(str(Path(sample) / 'mesh.png'), str(Path(output_C_folder) / (f'{ind:04d}_'+Path(sample).stem + '.jpg')))
