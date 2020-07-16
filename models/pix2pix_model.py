@@ -3,6 +3,7 @@ from pytorch3d.io import load_objs_as_meshes, save_obj
 from pytorch3d.renderer import MeshRenderer, MeshRasterizer, PointLights, TexturedSoftPhongShader, \
     look_at_view_transform, OpenGLPerspectiveCameras, RasterizationSettings, BlendParams, DirectionalLights, Materials, \
     SoftSilhouetteShader
+from pytorch3d.renderer.mesh.shader import UVsCorrespondenceShader
 from pytorch3d.structures import Textures
 import numpy as np
 from .base_model import BaseModel
@@ -70,7 +71,7 @@ class Pix2PixModel(BaseModel):
             opt (Option class)-- stores all the experiment flags; needs to be a subclass of BaseOptions
         """
         BaseModel.__init__(self, opt)
-        config = SimpleNamespace(batch_size=1, flame_model_path='./smpl_model/male_model.pkl')
+        config = SimpleNamespace(batch_size=self.opt.batch_size, flame_model_path='./smpl_model/male_model.pkl')
 
         self.flamelayer = FlameDecoder(config)
         self.flamelayer.cuda()
@@ -122,18 +123,19 @@ class Pix2PixModel(BaseModel):
                                                    requires_grad=True)
 
             self.optimizer_G = torch.optim.Adam(self.netG.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
-            # self.optimizer_F = torch.optim.Adam(self.netF.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
             self.optimizer_F = torch.optim.Adam(list(self.netF.parameters()) + [self.global_shape], lr=opt.lr,
                                                 betas=(opt.beta1, 0.999))
-            self.optimizer_D = torch.optim.Adam(self.netD.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
+            # self.optimizer_D = torch.optim.Adam(self.netD.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
+            self.optimizer_D = torch.optim.SGD(self.netD.parameters(),
+                                               lr=opt.lr)  # TODO Check is SGD is better than ADAM
             self.optimizers.append(self.optimizer_G)
             self.optimizers.append(self.optimizer_D)
             self.optimizers.append(self.optimizer_F)
 
-        self.initDifferentialRenderer()
+        self.init_differential_renderer()
         self.set_default_weights()
 
-    def initDifferentialRenderer(self):
+    def init_differential_renderer(self):
 
         distance = 0.3
         R, T = look_at_view_transform(distance, 0, 0)
@@ -157,7 +159,6 @@ class Pix2PixModel(BaseModel):
             ambient_color=[[1.0, 1.0, 1.0]],
             specular_color=[[0.0, 0.0, 0.0]],
             diffuse_color=[[1.0, 1.0, 1.0]],
-            # shininess=0
         )
         # bp = BlendParams(background_color=(-1, -1, -1))  # black
         # bp = BlendParams(background_color=(1, 1, 1))  # white is default
@@ -175,6 +176,27 @@ class Pix2PixModel(BaseModel):
                 device=self.device,
                 lights=lights,
                 cameras=cameras,
+            )
+        )
+        import cv2
+
+        segmentation_texture_map = cv2.imread(str(Path('resources') / 'part_segmentation_map_2048_symetric.png'))[...,
+                                   ::-1].astype(np.float) / 255
+        import matplotlib.pyplot as plt
+        plt.imshow(segmentation_texture_map)
+        plt.show()
+
+        segmentation_texture_map = (torch.from_numpy(np.array(segmentation_texture_map))).unsqueeze(0).float()
+        self.segmentation_3d_renderer = MeshRenderer(
+            rasterizer=MeshRasterizer(
+                cameras=cameras,
+                raster_settings=raster_settings
+            ),
+
+            shader=UVsCorrespondenceShader(
+                device=self.device,
+                cameras=cameras,
+                colormap=segmentation_texture_map
             )
         )
 
@@ -238,7 +260,9 @@ class Pix2PixModel(BaseModel):
         ind = 0
         # if use_fix_params:
         #     flame_param[:, ind:shape_params_size] = data['shape_params']
-        self.shape_params = flame_param[:, ind:self.shape_params_size] + base_flame_params['shape_params'][0]
+        # self.shape_params = flame_param[:, ind:self.shape_params_size] + base_flame_params['shape_params']
+        self.shape_params = self.global_shape
+
         ind += self.shape_params_size
         # if use_fix_params:
         # flame_param[:, ind:ind + expression_params_size] = data['expression_params']
@@ -271,8 +295,7 @@ class Pix2PixModel(BaseModel):
         ind += self.transl_size
         self.eyball_pose = flame_param[:, ind:ind + self.eyball_pose_size]
         ind += self.eyball_pose_size
-        vertices = self.flamelayer(shape_params=self.global_shape[0], expression_params=self.expression_params,
-                                   # vertices = self.flamelayer(shape_params=self.shape_params, expression_params=self.expression_params,
+        vertices = self.flamelayer(shape_params=self.shape_params[0], expression_params=self.expression_params,
                                    pose_params=self.pose_params, neck_pose=self.neck_pose, transl=self.transl,
                                    eye_pose=self.eyball_pose)
         return vertices
@@ -306,18 +329,24 @@ class Pix2PixModel(BaseModel):
 
         images = self.renderer(self.estimated_mesh, materials=self.materials)
         silhouette_images = self.silhouette_renderer(self.estimated_mesh, materials=self.materials)[..., 3].unsqueeze(0)
-        negative_silhouette_images = self.negative_silhouette_renderer(self.estimated_mesh, materials=self.materials)[..., 3].unsqueeze(0)
+        negative_silhouette_images = self.negative_silhouette_renderer(self.estimated_mesh, materials=self.materials)[
+            ..., 3].unsqueeze(0)
         transforms.ToPILImage()(silhouette_images
                                 .squeeze().permute(0, 1).cpu()).save('out/silhouette.png')
         # transforms.ToPILImage()(images
         #                         .squeeze().permute(2, 0, 1).cpu()).save('out/img.png')
-        cull_backfaces_mask =  (1-(silhouette_images- negative_silhouette_images).abs())
+        cull_backfaces_mask = (1 - (silhouette_images - negative_silhouette_images).abs())
         img = (images[0][..., :3].detach().cpu().numpy() * 255).astype(np.uint8)
         Image.fromarray(img).save('out/test1.png')
         images = self.Normalize(images)
         silhouette_images = silhouette_images.clamp(0, 1)
-
-        return images[..., :3].permute(0, 3, 1, 2), silhouette_images,cull_backfaces_mask
+        segmented_3d_model_image = self.segmentation_3d_renderer(self.estimated_mesh)
+        # Image.fromarray(
+        #     ((255 * segmentation_image[0, ..., :3]).squeeze().detach().cpu().numpy().astype(np.uint8))).save(
+        #     str('out/segmentatino_texture.png')
+        # )
+        return images[..., :3].permute(0, 3, 1, 2), silhouette_images, cull_backfaces_mask, segmented_3d_model_image[
+                                                                                            ..., :3].permute(0, 3, 1, 2)
 
     def UnNormalize(self, img):
         return img * 0.5 + 0.5
@@ -360,13 +389,14 @@ class Pix2PixModel(BaseModel):
                                                                          use_fix_params=zero_out_estimated_texture_map)
 
             # self.fake_B = self.project_to_image_plane(self.fake_geo_from_flame, self.UnNormalize(self.real_A))
-            self.fake_B, self.fake_B_silhouette ,self.cull_backfaces_mask= self.project_to_image_plane(self.fake_geo_from_flame,
-                                                                              self.UnNormalize(self.fake_Texture))
+            self.fake_B, self.fake_B_silhouette, self.cull_backfaces_mask, self.segmented_3d_model_image = self.project_to_image_plane(
+                self.fake_geo_from_flame,
+                self.UnNormalize(self.fake_Texture))
         else:
             self.fake_B = self.netG(self.real_A)  # G(Texture)
         # with torch.no_grad(): #TODO check test or remove
-            # self.fake_B = self.fake_B * self.cull_backfaces_mask
-            # self.real_B = self.real_B * self.cull_backfaces_mask
+        # self.fake_B = self.fake_B * self.cull_backfaces_mask
+        # self.real_B = self.real_B * self.cull_backfaces_mask
         # eventually should produce self.fake_B
 
     def set_default_weights(self):
@@ -422,8 +452,10 @@ class Pix2PixModel(BaseModel):
         self.loss_G_GAN = self.criterionGAN(pred_fake, True)
         # Second, G(A) = B
 
-        self.loss_G_L1_reducted = self.criterionL1(self.fake_B, self.real_B) * self.rect_mask #* self.cull_backfaces_mask
+        self.loss_G_L1_reducted = self.criterionL1(self.fake_B,
+                                                   self.real_B) * self.rect_mask  # * self.cull_backfaces_mask
         self.loss_G_L1 = self.loss_G_L1_reducted.abs().mean() * self.opt.lambda_L1
+        self.loss_G_L1_reducted = self.loss_G_L1_reducted.abs().mean(1).unsqueeze(0).clamp(0, 255)
         # image_pil = transforms.ToPILImage()(self.loss_G_L1[0].cpu())
         # image_pil.save('out/s.png')
 
@@ -432,15 +464,19 @@ class Pix2PixModel(BaseModel):
         self.loss_silhouette = self.rect_mask.squeeze()[0] * self.criterionBCE(
             self.rect_mask.squeeze()[0] * self.fake_B_silhouette.squeeze(),
             self.rect_mask.squeeze()[0] * self.true_mask.squeeze())
-        image_pil = transforms.ToPILImage()(255 * self.loss_silhouette.cpu())
-        image_pil.save('out/loss_silhouette.png')
+
+        transforms.ToPILImage()(255 * self.loss_silhouette.cpu()).save('out/loss_silhouette.png')
+        transforms.ToPILImage()(self.segmented_3d_model_image.cpu().squeeze()).save('out/segmentatino_texture.png')
+
         self.loss_silhouette = self.loss_silhouette.sum() * self.opt.lambda_silhouette
-
-        self.loss_face_part_segmentation = self.CrossEntropyCriterion(self.fake_B_seg,
-                                                                      self.real_B_seg.long()) * self.opt.lambda_face_seg
-
+        self.segmented_3d_model_image = torch.nn.functional.one_hot(
+            (self.segmented_3d_model_image[:, 0, :, :] * 255).long()).float()
+        self.loss_3d_face_part_segmentation = self.CrossEntropyCriterion(self.segmented_3d_model_image,
+                                                                         self.real_B_seg.long()) * self.opt.lambda_face_seg
+        self.loss_2d_face_part_segmentation = self.CrossEntropyCriterion(self.fake_B_seg,
+                                                                         self.real_B_seg.long()) * self.opt.lambda_face_seg
         # combine loss and calculate gradients
-        self.loss_G = self.loss_G_GAN + self.loss_G_L1 + self.loss_F_Reg   + self.loss_silhouette  # + self.loss_face_part_segmentation
+        self.loss_G = self.loss_G_GAN + self.loss_G_L1 + self.loss_F_Reg + self.loss_silhouette  # +self.loss_3d_face_part_segmentation# + self.loss_face_part_segmentation
         # self.loss_silhouette = self.loss_silhouette.repeat(3, 1, 1).permute(1,2,0)
         self.loss_G.backward()
 
@@ -467,9 +503,7 @@ class Pix2PixModel(BaseModel):
 
         return out, parsing_tensor
 
-    def optimize_parameters(self):
-        self.forward()  # compute fake images: G(Texture) and G(Flame)
-        # update D
+    def mask_outputs(self):
         self.rect_mask = torch.zeros(self.fake_B.shape).cuda()
         self.rect_mask[..., 0:195, 40:200] = 1
         _, self.real_B_seg = self.perform_face_part_segmentation(self.real_B, fname='real_B_seg')
@@ -478,20 +512,27 @@ class Pix2PixModel(BaseModel):
         self.fake_B = self.Normalize(self.UnNormalize(self.fake_B) * self.rect_mask)
         self.real_B = self.Normalize(self.UnNormalize(self.real_B) * self.rect_mask)
 
+        self.segmented_3d_model_image = self.segmented_3d_model_image * self.rect_mask[:, 0, ...]
         self.real_B_seg = self.real_B_seg * self.rect_mask[:, 0, ...]
         self.fake_B_seg = self.fake_B_seg * self.rect_mask[:, 0, ...]
         # self.mask = self.mask * self.true_mask
 
-        self.set_requires_grad(self.netD, True)  # enable backprop for D
-        self.optimizer_D.zero_grad()  # set D's gradients to zero
-        self.backward_D()  # calculate gradients for D
-        self.optimizer_D.step()  # update D's weights
-        # update G
+    def optimize_parameters(self):
+        iteration = 2
+        for i in range(iteration):  # TODO test discriminator-generator balancing
 
-        self.set_requires_grad(self.netD, False)  # D requires no gradients when optimizing G
-        self.optimizer_G.zero_grad()  # set G's gradients to zero
-        self.optimizer_F.zero_grad()  # set F's gradients to zero
-
-        self.backward_G()  # calculate graidents for G
-        self.optimizer_G.step()  # udpate G's weights
-        self.optimizer_F.step()  # udpate F's weights
+            self.forward()  # compute fake images: G(Texture) and G(Flame)
+            self.mask_outputs()
+            # update D
+            if i == iteration - 1:
+                self.set_requires_grad(self.netD, True)  # enable backprop for D
+                self.optimizer_D.zero_grad()  # set D's gradients to zero
+                self.backward_D()  # calculate gradients for D
+                self.optimizer_D.step()  # update D's weights
+            # update G
+            self.set_requires_grad(self.netD, False)  # D requires no gradients when optimizing G
+            self.optimizer_G.zero_grad()  # set G's gradients to zero
+            self.optimizer_F.zero_grad()  # set F's gradients to zero
+            self.backward_G()  # calculate graidents for G
+            self.optimizer_G.step()  # udpate G's weights
+            self.optimizer_F.step()  # udpate F's weights

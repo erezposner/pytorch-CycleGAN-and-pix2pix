@@ -267,8 +267,8 @@ class GANLoss(nn.Module):
 
         if target_is_real:
             target_tensor = self.real_label - torch.rand(1).to(device) * self.soft_labels
-        else:
-            target_tensor = self.fake_label + torch.rand(1).to(device) * self.soft_labels
+        else: #Only perform one sided label smoothing according to https://arxiv.org/pdf/1701.00160.pdf
+            target_tensor = self.fake_label
         return target_tensor.expand_as(prediction)
 
     def __call__(self, prediction, target_is_real):

@@ -16,6 +16,7 @@ class FacePartSegmentation(nn.Module):
         save_pth = './models/face_part_seg/res/cp/79999_iter.pth'
         self.net.load_state_dict(torch.load(save_pth))
         self.net.eval()
+
     def forward(self, image):
         out = self.net(image)[0]
         # parsing = out.squeeze(0).cpu().numpy().argmax(0)
@@ -25,17 +26,33 @@ class FacePartSegmentation(nn.Module):
         #                                                                                         Image.BILINEAR)
         # vis_parsing_maps(image, parsing, stride=1, save_im=True, save_path='out/seg.png')
         return out
+
     def vis_parsing_maps(self, im, parsing_anno, stride, save_im=False, save_path='vis_results/parsing_map_on_im.jpg'):
         # Colors for all 20 parts
-        part_colors = [[255, 0, 0], [255, 85, 0], [255, 170, 0],
-                       [255, 0, 85], [255, 0, 170],
-                       [0, 255, 0], [85, 255, 0], [170, 255, 0],
-                       [0, 255, 85], [0, 255, 170],
-                       [0, 0, 255], [85, 0, 255], [170, 0, 255],
-                       [0, 85, 255], [0, 170, 255],
-                       [255, 255, 0], [255, 255, 85], [255, 255, 170],
-                       [255, 0, 255], [255, 85, 255], [255, 170, 255],
-                       [0, 255, 255], [85, 255, 255], [170, 255, 255]]
+        part_colors = [[0, 0, 255],  # 1
+                       [0, 85, 255],  # 2
+                       [0, 170, 255],  # 3
+                       [85, 0, 255],  # 4
+                       [170, 0, 255],  # 5
+                       [0, 255, 0],  # 6
+                       [0, 255, 85],  # 7
+                       [0, 255, 170],  # 8
+                       [85, 255, 0],  # 9
+                       [170, 255, 0],  # 10
+                       [255, 0, 0],  # 11
+                       [255, 0, 85],  # 12
+                       [255, 0, 170],  # 13
+                       [255, 85, 0],  # 14
+                       [255, 170, 0],  # 15
+                       [0, 255, 255],  # 16
+                       [85, 255, 255],  # 17
+                       [170, 255, 255],  # 18
+                       [255, 0, 255],  # 19
+                       [255, 85, 255],  # 20
+                       [255, 170, 255],  # 21
+                       [255, 255, 0],  # 22
+                       [255, 255, 85],  # 23
+                       [255, 255, 170]]  # 24
 
         im = np.array(im)
         vis_im = im.copy().astype(np.uint8)
@@ -47,7 +64,7 @@ class FacePartSegmentation(nn.Module):
 
         for pi in range(1, num_of_class + 1):
             index = np.where(vis_parsing_anno == pi)
-            vis_parsing_anno_color[index[0], index[1], :] = part_colors[pi]
+            vis_parsing_anno_color[index[0], index[1], :] = part_colors[pi][::-1]
 
         vis_parsing_anno_color = vis_parsing_anno_color.astype(np.uint8)
         # print(vis_parsing_anno_color.shape, vis_im.shape)
