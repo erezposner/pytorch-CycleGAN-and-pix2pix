@@ -6,14 +6,44 @@ from torch.optim import lr_scheduler
 import torchvision
 
 
+# class geo(nn.Module):
+#     def __init__(self,gpu_ids=[]):
+#
+#         super(geo, self).__init__()
+#
+#         self.netGlobal_shape = torch.nn.Parameter(torch.randn((1, 1, 300)))
+#
+#         if len(gpu_ids) > 0:
+#             assert (torch.cuda.is_available())
+#             self.netGlobal_shape.to(gpu_ids[0])
+#              model = torch.nn.DataParallel(self.netGlobal_shape, gpu_ids)  # multi-GPUs
+#         self.netGlobal_shape = torch.nn.DataParallel(self.netGlobal_shape, [0])
+#         print(net.module())
+# model.state_dict()
 ###############################################################################
 # Helper Functions
 ###############################################################################
+class GlobalShape(nn.Module):
+    def __init__(self, shape_params_size):
+        super(GlobalShape, self).__init__()
+        self.global_shape = torch.nn.Parameter(torch.randn((1, 1, shape_params_size)))
+    def forward(self):
+        return self.global_shape
 
 
 class Identity(nn.Module):
     def forward(self, x):
         return x
+
+
+def define_global_shape(shape_params_size, gpu_ids=[]):
+    model = GlobalShape(shape_params_size)
+    if len(gpu_ids) > 0:
+        assert (torch.cuda.is_available())
+        model.to(gpu_ids[0])
+        model = torch.nn.DataParallel(model, gpu_ids)  # multi-GPUs
+
+    return model
 
 
 def get_norm_layer(norm_type='instance'):
@@ -124,7 +154,7 @@ def init_net(net, init_type='normal', init_gain=0.02, gpu_ids=[]):
 def define_F(input_nc, output_nc, ngf, netG, norm='batch', use_dropout=False, init_type='normal', init_gain=0.02,
              gpu_ids=[]):
     model = torchvision.models.vgg19(pretrained=False)
-    model.load_state_dict(torch.load('checkpoints/vgg19/vgg19-dcbb9e9d.pth'))
+    model.load_state_dict(torch.load('resources/vgg19/vgg19-dcbb9e9d.pth'))
     model.classifier.add_module('6', nn.Linear(4096, output_nc))
     # print(model)
     model = init_net(model, init_type, init_gain, gpu_ids)
@@ -173,6 +203,14 @@ def define_G(input_nc, output_nc, ngf, netG, norm='batch', use_dropout=False, in
     else:
         raise NotImplementedError('Generator model name [%s] is not recognized' % netG)
     return init_net(net, init_type, init_gain, gpu_ids)
+
+
+# # class GlobalShape(nn.Module):
+#
+# def define_Global_shape(size_of_shape, init_type='normal', init_gain=0.0002, gpu_ids=[]):
+#     global_shape = nn.ParameterList([torch.nn.Parameter(torch.randn((1, 1, size_of_shape)),
+#                                                         requires_grad=True)])
+#     return init_net(global_shape, init_type, init_gain, gpu_ids)
 
 
 def define_D(input_nc, ndf, netD, n_layers_D=3, norm='batch', init_type='normal', init_gain=0.02, gpu_ids=[]):
@@ -267,7 +305,7 @@ class GANLoss(nn.Module):
 
         if target_is_real:
             target_tensor = self.real_label - torch.rand(1).to(device) * self.soft_labels
-        else: #Only perform one sided label smoothing according to https://arxiv.org/pdf/1701.00160.pdf
+        else:  # Only perform one sided label smoothing according to https://arxiv.org/pdf/1701.00160.pdf
             target_tensor = self.fake_label
         return target_tensor.expand_as(prediction)
 

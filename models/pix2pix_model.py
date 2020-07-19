@@ -81,15 +81,17 @@ class Pix2PixModel(BaseModel):
 
         # specify the training losses you want to print out. The training/test scripts will call <BaseModel.get_current_losses>
         # self.loss_names = ['G_GAN', 'G_L1', 'D_real', 'D_fake']
-        self.loss_names = ['G_GAN', 'G_L1', 'D_real', 'D_fake', 'silhouette', 'face_part_segmentation']
+        self.loss_names = ['G_GAN', 'G_L1', 'D_real', 'D_fake', 'silhouette', '2d_face_part_segmentation',
+                           '3d_face_part_segmentation']
         # specify the images you want to save/display. The training/test scripts will call <BaseModel.get_current_visuals>
         # self.visual_names = ['real_A', 'fake_Texture', 'fake_B', 'real_B','loss_G_L1_reducted']
-        self.visual_names = ['fake_Texture', 'fake_B', 'real_B', 'loss_G_L1_reducted']
+        self.visual_names = ['fake_Texture', 'fake_B', 'real_B']
+        # self.visual_names = ['fake_Texture', 'fake_B', 'real_B']
         # specify the models you want to save to the disk. The training/test scripts will call <BaseModel.save_networks> and <BaseModel.load_networks>
         if self.isTrain:
-            self.model_names = ['G', 'D']
+            self.model_names = ['G', 'D', 'Global_shape']
         else:  # during test time, only load G
-            self.model_names = ['G']
+            self.model_names = ['G', 'Global_shape']
 
         # initialize flame parameters
         self.shape_params_size = 300
@@ -101,10 +103,15 @@ class Pix2PixModel(BaseModel):
         self.eyball_pose_size = 6
         # define networks (both generator and discriminator)
         # TODO  opt.output_nc instead of 2 if generating images
-        self.netG = networks.define_G(opt.input_nc, 3, opt.ngf, opt.netG, opt.norm,
+        self.netGlobal_shape = networks.define_global_shape(self.shape_params_size, self.gpu_ids)
+
+        self.netG = networks.define_G(opt.input_nc, opt.output_nc, opt.ngf, opt.netG, opt.norm,
                                       not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids)
         self.netF = networks.define_F(opt.input_nc, opt.output_flame_params, opt.ngf, opt.netG, opt.norm,
                                       not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids)
+
+        # self.netGlobal_shape = torch.nn.Parameter(torch.randn((1, 1, self.shape_params_size)).to(self.device),
+        #                                           requires_grad=True)
 
         if self.isTrain:  # define a discriminator; conditional GANs need to take both input and output images; Therefore, #channels for D is input_nc + output_nc
             self.netD = networks.define_D(opt.input_nc + opt.output_nc, opt.ndf, opt.netD,
@@ -112,6 +119,7 @@ class Pix2PixModel(BaseModel):
 
         if self.isTrain:
             # define loss functions
+            self.visual_names.append('loss_G_L1_reducted')
             self.criterionGAN = networks.GANLoss(opt.gan_mode, soft_labels=self.opt.soft_labels).to(self.device)
             self.criterionL1 = torch.nn.L1Loss(reduction='none')
             self.CrossEntropyCriterion = torch.nn.CrossEntropyLoss()
@@ -119,11 +127,12 @@ class Pix2PixModel(BaseModel):
             self.criterionBCE = torch.nn.BCELoss(reduction='none')
 
             # initialize optimizers; schedulers will be automatically created by function <BaseModel.setup>.
-            self.global_shape = torch.nn.Parameter(torch.randn((1, 1, self.shape_params_size)).to(self.device),
-                                                   requires_grad=True)
 
             self.optimizer_G = torch.optim.Adam(self.netG.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
-            self.optimizer_F = torch.optim.Adam(list(self.netF.parameters()) + [self.global_shape], lr=opt.lr,
+            # self.optimizer_F = torch.optim.Adam(list(self.netF.parameters()) + [self.netGlobal_shape], lr=opt.lr,
+            #                                     betas=(opt.beta1, 0.999))
+            self.optimizer_F = torch.optim.Adam(list(self.netF.parameters()) + list(self.netGlobal_shape.parameters()),
+                                                lr=opt.lr,
                                                 betas=(opt.beta1, 0.999))
             # self.optimizer_D = torch.optim.Adam(self.netD.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
             self.optimizer_D = torch.optim.SGD(self.netD.parameters(),
@@ -261,7 +270,7 @@ class Pix2PixModel(BaseModel):
         # if use_fix_params:
         #     flame_param[:, ind:shape_params_size] = data['shape_params']
         # self.shape_params = flame_param[:, ind:self.shape_params_size] + base_flame_params['shape_params']
-        self.shape_params = self.global_shape
+        self.shape_params = self.netGlobal_shape.module.global_shape
 
         ind += self.shape_params_size
         # if use_fix_params:
@@ -499,9 +508,9 @@ class Pix2PixModel(BaseModel):
             self.face_parts_segmentation.vis_parsing_maps(image, parsing, stride=1, save_im=True,
                                                           save_path=f'out/{fname}.png')
         out = F.interpolate(out, (256, 256))
-        parsing_tensor = torch.argmax(out, dim=1)
+        argmax_tensor = torch.argmax(out, dim=1)
 
-        return out, parsing_tensor
+        return out, argmax_tensor
 
     def mask_outputs(self):
         self.rect_mask = torch.zeros(self.fake_B.shape).cuda()
