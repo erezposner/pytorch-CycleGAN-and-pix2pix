@@ -48,3 +48,5 @@ smpl_model/*
 /vgg_model/
 /models/face_part_seg/data/
 /models/face_part_seg/res/
+resources/vgg19
+docs/.~lock.segmentation_annotation.ods#
