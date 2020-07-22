@@ -24,7 +24,7 @@ import os
 import torch.nn.functional as F
 
 
-class Pix2PixModel(BaseModel):
+class HybridModel(BaseModel):
     """ This class implements the pix2pix model, for learning a mapping from input images to output images given paired data.
 
     The model training requires '--dataset_mode aligned' dataset.
@@ -51,7 +51,7 @@ class Pix2PixModel(BaseModel):
         By default, we use vanilla GAN loss, UNet with batchnorm, and aligned datasets.
         """
         # changing the default values to match the pix2pix paper (https://phillipi.github.io/pix2pix/)
-        parser.set_defaults(norm='batch', netG='unet_256', dataset_mode='aligned')
+        parser.set_defaults(norm='batch', netG='unet_256_stub_318', dataset_mode='aligned')
         if is_train:
             parser.set_defaults(pool_size=0, gan_mode='vanilla')
             parser.add_argument('--lambda_L1', type=float, default=50.0, help='weight for L1 loss')
@@ -59,7 +59,7 @@ class Pix2PixModel(BaseModel):
                                 help='weight for silhouette loss')
             parser.add_argument('--lambda_face_seg', type=float, default=1e-5,
                                 help='weight for face parts segmentation loss')
-            parser.add_argument('--lambda_flame_regularizer', type=float, default=500,  # 500.0
+            parser.add_argument('--lambda_flame_regularizer', type=float, default=500.0,  # 100.0
                                 help='weight for flame regularizer loss')
 
         return parser
@@ -104,8 +104,8 @@ class Pix2PixModel(BaseModel):
         # TODO  opt.output_nc instead of 2 if generating images
         self.netGlobal_shape = networks.define_global_shape(self.shape_params_size, self.gpu_ids)
 
-        self.netG = networks.define_G(opt.input_nc, opt.output_nc, opt.ngf, opt.netG, opt.norm,
-                                      not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids)
+        self.netG = networks.define_G(opt.input_nc * 2, opt.output_nc, opt.ngf, opt.netG, opt.norm,
+                                      not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids,image_size = self.opt.crop_size)
         self.netF = networks.define_F(opt.input_nc, opt.output_flame_params, opt.ngf, opt.netG, opt.norm,
                                       not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids)
 
@@ -132,7 +132,7 @@ class Pix2PixModel(BaseModel):
             self.optimizer_G = torch.optim.Adam(self.netG.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
             # self.optimizer_F = torch.optim.Adam(list(self.netF.parameters()) + [self.netGlobal_shape], lr=opt.lr,
             #                                     betas=(opt.beta1, 0.999))
-            self.optimizer_F = torch.optim.Adam(list(self.netF.parameters()) + list(self.netGlobal_shape.parameters()),
+            self.optimizer_F = torch.optim.Adam(list(self.netF.parameters()) +list(self.netGlobal_shape.parameters()),
                                                 lr=opt.lr,
                                                 betas=(opt.beta1, 0.999))
             # self.optimizer_D = torch.optim.Adam(self.netD.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
@@ -246,7 +246,8 @@ class Pix2PixModel(BaseModel):
         self.true_flame_params = input['true_flame_params']
         self.silh = input['silh'].to(self.device)
         self.true_mask = input['true_mask'].to(self.device)
-
+        self.fake_normal_map = input['normals_map_im'].to(self.device)
+        self.fake_correspondence_map = input['correspondence_map_im'].to(self.device)
         self.true_mask = self.true_mask.clamp(0, 1)
 
         # self.real_C = input['C'].to(self.device)
@@ -266,7 +267,7 @@ class Pix2PixModel(BaseModel):
             base_flame_params['transl'] = torch.zeros((1, 1, self.transl_size)).cuda()
 
         if use_fix_params:
-            flame_param = torch.zeros((1, 418)).cuda()
+            flame_param = torch.zeros((1, 118)).cuda()
         # Creating a batch of mean shapes
         ind = 0
         # if use_fix_params:
@@ -274,7 +275,7 @@ class Pix2PixModel(BaseModel):
         # self.shape_params = flame_param[:, ind:self.shape_params_size] + base_flame_params['shape_params']
         self.shape_params = self.netGlobal_shape.module.global_shape
 
-        ind += self.shape_params_size
+        # ind += self.shape_params_size
         # if use_fix_params:
         # flame_param[:, ind:ind + expression_params_size] = data['expression_params']
         self.expression_params = flame_param[:, ind:ind + self.expression_params_size] + \
@@ -368,7 +369,10 @@ class Pix2PixModel(BaseModel):
     def forward(self):
         """Run forward pass; called by both functions <optimize_parameters> and <test>."""
         if True:
-            self.uvs = self.netG(self.real_A)  # RefinedTextureMap = G(TextureMap)
+            inp = torch.cat((self.real_A,self.fake_correspondence_map),1)
+            # inp = self.real_A
+            self.uvs , self.fake_flame= self.netG(inp)  # RefinedTextureMap = G(TextureMap)
+
             use_uvs = False
             if use_uvs:  # don't forget to set net output channels to 2
                 # region use displacement with inital guess that is 0
@@ -387,7 +391,7 @@ class Pix2PixModel(BaseModel):
             # cv2.imwrite('out/t.png',
             #             (self.fake_B.detach().cpu().squeeze().permute(1, 2, 0).numpy()).astype(np.uint8))
             # torch.autograd.set_detect_anomaly(True)
-            self.fake_flame = self.netF(self.real_B)  # FlameParams = G(CapturedImg)
+            # self.fake_flame = self.netF(self.real_B)  # FlameParams = G(CapturedImg)
             if self.opt.constant_data:
                 with open('bareteeth.000001.26_C/coma_2/flame_params.pkl', 'rb') as file:
                     data = pickle.load(file)
@@ -395,7 +399,7 @@ class Pix2PixModel(BaseModel):
                         self.fake_flame = data
 
             zero_out_estimated_geomtery = False
-            self.fake_geo_from_flame = self.create_geo_from_flame_params(self.fake_flame,
+            self.fake_geo_from_flame = self.create_geo_from_flame_params(self.fake_flame/1000,
                                                                          base_flame_params=self.true_flame_params,
                                                                          use_fix_params=zero_out_estimated_geomtery)
 
@@ -484,25 +488,25 @@ class Pix2PixModel(BaseModel):
         self.segmented_3d_one_hot_model_image = torch.nn.functional.one_hot(
             (self.segmented_3d_model_image[:, 0, :, :]).long()).float().permute(0,3,1,2)
         self.segmented_3d_one_hot_model_image[self.segmented_3d_one_hot_model_image == 0] = self.segmented_3d_one_hot_model_image[self.segmented_3d_one_hot_model_image == 0] + eta
-        # self.segmented_3d_one_hot_model_image[self.segmented_3d_one_hot_model_image == 1] = self.segmented_3d_one_hot_model_image[self.segmented_3d_one_hot_model_image == 1] - eta
+
         self.loss_3d_face_part_segmentation = self.CrossEntropyCriterion1(torch.log(self.segmented_3d_one_hot_model_image),
-                                   self.real_B_seg.long()) * self.opt.lambda_face_seg
-        self.loss_3d_face_part_segmentation_de = self.loss_3d_face_part_segmentation.clamp(0, 255).unsqueeze(0) * 1000
+                                   self.real_B_seg.long())
+        self.loss_3d_face_part_segmentation_de = self.loss_3d_face_part_segmentation.clamp(0, 255).unsqueeze(0)
 
         # self.loss_3d_face_part_segmentation = self.CrossEntropyCriterion2(self.segmented_3d_model_image[:, 0, :, :],
         #                                                                  self.real_B_seg.float()) * self.opt.lambda_face_seg
         # self.loss_3d_face_part_segmentation_de = self.loss_3d_face_part_segmentation.clamp(0,255).unsqueeze(0) / 255
         # transforms.ToPILImage()(self.loss_3d_face_part_segmentation_de.cpu().squeeze()).save('out/loss_3d_face_part_segmentation.png')
 
-        transforms.ToPILImage()(self.loss_3d_face_part_segmentation_de.cpu().squeeze()).save('out/loss_3d_face_part_segmentation_de.png')
+        transforms.ToPILImage()(self.loss_3d_face_part_segmentation_de.cpu().squeeze()).save('out/loss_3d_face_part_segmentation.png')
 
-        self.loss_3d_face_part_segmentation = self.loss_3d_face_part_segmentation.sum() *100#* self.opt.lambda_face_seg
+        self.loss_3d_face_part_segmentation = self.loss_3d_face_part_segmentation.sum()* self.opt.lambda_face_seg #* self.opt.lambda_face_seg
 
         # self.loss_2d_face_part_segmentation = self.CrossEntropyCriterion(self.fake_B_seg,
         #                                                                  self.real_B_seg.long()) * self.opt.lambda_face_seg
         # combine loss and calculate gradients
-        self.loss_G = self.loss_G_GAN + self.loss_G_L1 + self.loss_F_Reg + self.loss_3d_face_part_segmentation#+ self.loss_silhouette   + self.loss_face_part_segmentation
-        # self.loss_G =  self.loss_F_Reg + self.loss_3d_face_part_segmentation#+ self.loss_silhouette   + self.loss_face_part_segmentation
+        self.loss_G = self.loss_G_GAN + self.loss_G_L1 + self.loss_F_Reg + self.loss_3d_face_part_segmentation#+ self.loss_silhouette
+        # self.loss_G =  self.loss_F_Reg + self.loss_3d_face_part_segmentation#+ self.loss_silhouette
         self.loss_G.backward()
 
     def perform_face_part_segmentation(self, input_img, fname='seg'):

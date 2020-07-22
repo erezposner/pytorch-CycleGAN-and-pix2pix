@@ -69,7 +69,9 @@ class AlignedDataset(BaseDataset):
         AB = Image.open(AB_path).convert('RGB')
         with open(str(Path(AB_path).parent / f'{Path(AB_path).stem}.pkl'), 'rb') as f:
             metadata = pickle.load(f, encoding='latin1')
-        silh_im = Image.fromarray(metadata['true_silh'])
+        silh_im = Image.fromarray(metadata['rendered_silh'])
+        correspondence_map_im = Image.fromarray(metadata['correspondence_map'])
+        normals_map_im = Image.fromarray(metadata['normals_map'])
         # split AB image into A and B
         w, h = AB.size
         w2 = int(w / 2)
@@ -84,6 +86,8 @@ class AlignedDataset(BaseDataset):
         transform_params = get_params(self.opt, A.size)
         A_transform = get_transform(self.opt, transform_params, grayscale=(self.input_nc == 1))
         B_transform = get_transform(self.opt, transform_params, grayscale=(self.output_nc == 1))
+        ext_transform = get_transform(self.opt, transform_params, grayscale=(self.output_nc == 1),minus1To1=False)
+        meta_transform = get_transform(self.opt, transform_params, grayscale=(self.output_nc == 1))
         # C_transform = get_transform(self.opt, transform_params, grayscale=(self.output_nc == 1))
         # from torchvision import transforms
         # transforms.ToPILImage()(A.cpu()).save('a.png')
@@ -92,13 +96,16 @@ class AlignedDataset(BaseDataset):
         # C = C_transform(C)
         osize = [self.opt.load_size, self.opt.load_size]
 
-        trn = transforms.Compose([transforms.Resize(osize, Image.BICUBIC) ,
-                          transforms.ToTensor()
-                          ])
-        silh_im = trn(silh_im)
-        true_mask = trn(true_mask)
+        # trn = transforms.Compose([transforms.Resize(osize, Image.BICUBIC) ,
+        #                   transforms.ToTensor()
+        #                   ])
+        silh_im = ext_transform(silh_im)
+        true_mask = ext_transform(true_mask)
+        correspondence_map_im = meta_transform(correspondence_map_im)
+        normals_map_im = meta_transform(normals_map_im)
         # return {'A': A, 'B': B,'C': C, 'A_paths': AB_path, 'B_paths': AB_path, 'C_paths': AB_path}
-        return {'A': A, 'B': B, 'A_paths': AB_path, 'B_paths': AB_path, 'true_flame_params': metadata['true_flame_params'],'silh':silh_im,'true_mask':true_mask}
+        return {'A': A, 'B': B, 'A_paths': AB_path, 'B_paths': AB_path, 'true_flame_params': metadata['true_flame_params'],
+                'silh':silh_im,'true_mask':true_mask,'normals_map_im':normals_map_im,'correspondence_map_im':correspondence_map_im}
 
     def __len__(self):
         """Return the total number of images in the dataset."""

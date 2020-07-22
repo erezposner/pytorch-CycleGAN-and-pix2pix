@@ -80,7 +80,10 @@ class Resnet18(nn.Module):
         return feat8, feat16, feat32
 
     def init_weight(self):
-        state_dict = modelzoo.load_url(resnet18_url)
+        try:
+            state_dict= torch.load('resources/resnet_18/resnet18-5c106cde.pth')
+        except:
+            state_dict = modelzoo.load_url(resnet18_url)
         self_state_dict = self.state_dict()
         for k, v in state_dict.items():
             if 'fc' in k: continue

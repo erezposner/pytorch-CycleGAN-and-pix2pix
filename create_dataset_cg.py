@@ -12,8 +12,10 @@ def get_all_samples_from_cg_ds(ds_path):
 # TODO bind volume of dataset to /opt/data in settings
 
 dataset_path = Path('/opt/data/Subject 1')
+dataset_path = Path('/opt/data/master_reconstruction')
 # samples = glob.glob(str(dataset_path / '*'))
 samples = get_all_samples_from_cg_ds(dataset_path)
+print(f'{len(samples)} were found. Starting copying...')
 dataset_output_path = Path('./datasets/before_combine/DVP_CP')
 import numpy as np
 
@@ -35,11 +37,10 @@ for ind, sample in enumerate(samples):
     shutil.copy(str(Path(sample) / 'mesh.png'), str(Path(output_C_folder) / (f'{ind:04d}' + '.jpg')))
     shutil.copy(str(Path(sample) / 'flame_params.pkl'),
                 str(Path(output_C_folder) / (f'{ind:04d}' + '_flame_params.pkl')))
-    shutil.copy(str(Path(sample) / 'silh.jpg'), str(Path(output_C_folder) / (f'{ind:04d}' + '_silh.jpg')))
-    # shutil.copy(str(Path(sample) / 'original.jpg'), str(Path(output_A_folder) / (f'{ind:04d}_'+Path(sample).stem + '.jpg')))
-    # shutil.copy(str(Path(sample) / 'rendered.jpg'), str(Path(output_B_folder) / (f'{ind:04d}_'+Path(sample).stem + '.jpg')))
-    # shutil.copy(str(Path(sample) / 'mesh.png'), str(Path(output_C_folder) / (f'{ind:04d}_'+Path(sample).stem + '.jpg')))
-    # shutil.copy(str(Path(sample) / 'flame_params.pkl'), str(Path(output_C_folder) / (f'{ind:04d}_'+Path(sample).stem + '_flame_params.pkl')))
-    # shutil.copy(str(Path(sample) / 'silh.jpg'), str(Path(output_C_folder) / (f'{ind:04d}_'+Path(sample).stem + '_silh.jpg')))
+    shutil.copy(str(Path(sample) / 'normals_map.p'),
+                str(Path(output_C_folder) / (f'{ind:04d}' + '_normals_map.pkl')))
+    shutil.copy(str(Path(sample) / 'correspondence_map.p'),
+                str(Path(output_C_folder) / (f'{ind:04d}' + '_correspondence_map.pkl')))
+    shutil.copy(str(Path(sample) / 'rendered_silhouette.jpg'), str(Path(output_C_folder) / (f'{ind:04d}' + '_rendered_silhouette.jpg')))
 
-    # print(mode)
+
