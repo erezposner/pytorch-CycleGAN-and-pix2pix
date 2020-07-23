@@ -54,10 +54,10 @@ class HybridModel(BaseModel):
         parser.set_defaults(norm='batch', netG='unet_256_stub_318', dataset_mode='aligned')
         if is_train:
             parser.set_defaults(pool_size=0, gan_mode='vanilla')
-            parser.add_argument('--lambda_L1', type=float, default=50.0, help='weight for L1 loss')
+            parser.add_argument('--lambda_L1', type=float, default=10.0, help='weight for L1 loss')
             parser.add_argument('--lambda_silhouette', type=float, default=1e-5,
                                 help='weight for silhouette loss')
-            parser.add_argument('--lambda_face_seg', type=float, default=1e-5,
+            parser.add_argument('--lambda_face_seg', type=float, default=2.5e-5,
                                 help='weight for face parts segmentation loss')
             parser.add_argument('--lambda_flame_regularizer', type=float, default=500.0,  # 100.0
                                 help='weight for flame regularizer loss')
@@ -244,6 +244,8 @@ class HybridModel(BaseModel):
         self.real_A = input['A' if AtoB else 'B'].to(self.device)
         self.real_B = input['B' if AtoB else 'A'].to(self.device)
         self.true_flame_params = input['true_flame_params']
+        for k in self.true_flame_params.keys():
+            self.true_flame_params[k] =  self.true_flame_params[k].to(self.device)
         self.silh = input['silh'].to(self.device)
         self.true_mask = input['true_mask'].to(self.device)
         self.fake_normal_map = input['normals_map_im'].to(self.device)
