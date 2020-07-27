@@ -8,8 +8,9 @@ def make_mesh(verts: torch.tensor, faces: np.ndarray, detach:bool, textures = No
     if detach:
         verts = verts.detach()
     # Initialize each vertex to be white in color.
-    verts_rgb = torch.ones_like(verts)[None]  # (1, V, 3)
     if textures is None:
+        verts_rgb = torch.ones_like(verts)[None]  # (1, V, 3)
+
         textures = Textures(verts_rgb=verts_rgb.to(device))
 
     faces = torch.tensor(np.int32(faces), dtype=torch.long).cuda()

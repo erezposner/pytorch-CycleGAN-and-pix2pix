@@ -43,4 +43,8 @@ for ind, sample in enumerate(samples):
                 str(Path(output_C_folder) / (f'{ind:04d}' + '_correspondence_map.pkl')))
     shutil.copy(str(Path(sample) / 'rendered_silhouette.jpg'), str(Path(output_C_folder) / (f'{ind:04d}' + '_rendered_silhouette.jpg')))
 
+# import os
 
+# # os.chdir('datasets')
+# os.system(
+#     'python datasets/combine_A_and_B_and_C_metadata.py --fold_A /home/user3/repos/pytorch-CycleGAN-and-pix2pix/datasets/before_combine/DVP_CP/A --fold_B /home/user3/repos/pytorch-CycleGAN-and-pix2pix/datasets/before_combine/DVP_CP/B --fold_C /home/user3/repos/pytorch-CycleGAN-and-pix2pix/datasets/before_combine/DVP_CP/C --fold_ABC /home/user3/repos/pytorch-CycleGAN-and-pix2pix/datasets/DVP_ABC_CP --no_multiprocessing')

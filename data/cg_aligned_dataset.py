@@ -31,7 +31,7 @@ def create_mask_from_white_background(A):
     data = Image.fromarray(data)
     # data.save('out/true_mask.png')
     return data
-class AlignedDataset(BaseDataset):
+class CGAlignedDataset(BaseDataset):
     """A dataset class for paired image dataset.
 
     It assumes that the directory '/path/to/data/train' contains image pairs in the form of {A,B}.
@@ -76,17 +76,17 @@ class AlignedDataset(BaseDataset):
         w2 = int(w / 3)
         A = AB.crop((0, 0, w2, h))
         true_mask = create_mask_from_white_background(A)
-        # B = AB.crop((2*w2, 0, w, h))
-        B = AB.crop((w2, 0, w-w2, h))
-        # B = AB.crop((2*w2, 0, w, h))
+        yam_rendered_img = AB.crop((w2, 0, w-w2, h))
+        B = AB.crop((2*w2, 0, w, h))
+
         if self.opt.constant_data:
             B = Image.open(r'bareteeth.000001.26_C/coma_2/mesh.png').convert('RGB')#TODO remove
-        # C = AB.crop((2*w2, 0, w, h))
 
         # apply the same transform to both A and B
         transform_params = get_params(self.opt, A.size)
         A_transform = get_transform(self.opt, transform_params, grayscale=(self.input_nc == 1))
         B_transform = get_transform(self.opt, transform_params, grayscale=(self.output_nc == 1))
+        rendered_img_transform = get_transform(self.opt, transform_params, grayscale=(self.output_nc == 1))
         ext_transform = get_transform(self.opt, transform_params, grayscale=(self.output_nc == 1),minus1To1=False)
         meta_transform = get_transform(self.opt, transform_params, grayscale=(self.output_nc == 1))
         # C_transform = get_transform(self.opt, transform_params, grayscale=(self.output_nc == 1))
@@ -94,18 +94,15 @@ class AlignedDataset(BaseDataset):
         # transforms.ToPILImage()(A.cpu()).save('a.png')
         A = A_transform(A)
         B = B_transform(B)
+        yam_rendered_img = rendered_img_transform(yam_rendered_img)
         # C = C_transform(C)
-        osize = [self.opt.load_size, self.opt.load_size]
 
-        # trn = transforms.Compose([transforms.Resize(osize, Image.BICUBIC) ,
-        #                   transforms.ToTensor()
-        #                   ])
         silh_im = ext_transform(silh_im)
         true_mask = ext_transform(true_mask)
         correspondence_map_im = meta_transform(correspondence_map_im)
         normals_map_im = meta_transform(normals_map_im)
         # return {'A': A, 'B': B,'C': C, 'A_paths': AB_path, 'B_paths': AB_path, 'C_paths': AB_path}
-        return {'A': A, 'B': B, 'A_paths': AB_path, 'B_paths': AB_path, 'true_flame_params': metadata['true_flame_params'],
+        return {'yam_rendered_img':yam_rendered_img,'A': A, 'B': B, 'A_paths': AB_path, 'B_paths': AB_path, 'true_flame_params': metadata['true_flame_params'],
                 'silh':silh_im,'true_mask':true_mask,'normals_map_im':normals_map_im,'correspondence_map_im':correspondence_map_im}
 
     def __len__(self):

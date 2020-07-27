@@ -623,7 +623,7 @@ class UnetSkipConnectionBlockStub(nn.Module):
             # flame_regression = [nn.Linear(inner_nc * int(image_size_innermost ** 2), 118)]
 
             iterations = math.floor(math.log2(image_size_innermost))
-            # linear_iterations = math.floor(math.log2(inner_nc)) // 2
+
             linear_iterations = math.floor(math.log2(inner_nc / stub_nc)) // 2
             conv_list = []
 
@@ -639,7 +639,7 @@ class UnetSkipConnectionBlockStub(nn.Module):
                 # conv_list.append(nn.InstanceNorm1d(inner_nc // 2 ** (i + 1)))
                 conv_list.append(nn.LeakyReLU(0.2, True))
             conv_list.append(nn.Linear(inner_nc // 2 ** (i + 1), stub_nc))
-            conv_list.append(nn.Tanh())
+            # conv_list.append(nn.Tanh())
 
             self.model_flame_regression  = nn.ModuleList(conv_list)
 
@@ -675,7 +675,7 @@ class UnetSkipConnectionBlockStub(nn.Module):
             # conv_list.append(nn.InstanceNorm1d(inner_nc // 2 ** (i + 1)))
             conv_list.append(nn.LeakyReLU(0.2, True))
         conv_list.append(nn.Linear(inner_nc // 2 ** (i + 1), stub_nc))
-        conv_list.append(nn.Tanh())
+        # conv_list.append(nn.Tanh())
         model_flame_regression = nn.Sequential(*conv_list)
         summary(model_flame_regression.cuda(), (1, inner_nc))
 

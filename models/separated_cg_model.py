@@ -51,7 +51,7 @@ class separatedcgmodel(BaseModel):
         By default, we use vanilla GAN loss, UNet with batchnorm, and aligned datasets.
         """
         # changing the default values to match the pix2pix paper (https://phillipi.github.io/pix2pix/)
-        parser.set_defaults(norm='batch', netG='unet_256', dataset_mode='aligned')
+        parser.set_defaults(norm='batch', netG='unet_256', dataset_mode='cg_aligned')
         if is_train:
             parser.set_defaults(pool_size=0, gan_mode='vanilla')
             parser.add_argument('--lambda_L1', type=float, default=50.0, help='weight for L1 loss')
@@ -81,10 +81,10 @@ class separatedcgmodel(BaseModel):
 
         # specify the training losses you want to print out. The training/test scripts will call <BaseModel.get_current_losses>
         # self.loss_names = ['G_GAN', 'G_L1', 'D_real', 'D_fake']
-        self.loss_names = ['G_GAN', 'G_L1', 'D_real', 'D_fake', 'silhouette','3d_face_part_segmentation']
+        self.loss_names = ['G_GAN', 'G_L1', 'D_real', 'D_fake', 'silhouette', '3d_face_part_segmentation']
         # specify the images you want to save/display. The training/test scripts will call <BaseModel.get_current_visuals>
         # self.visual_names = ['real_A', 'fake_Texture', 'fake_B', 'real_B','loss_G_L1_reducted']
-        self.visual_names = ['fake_Texture', 'fake_B', 'real_B','loss_3d_face_part_segmentation_de']
+        self.visual_names = ['real_A','fake_Texture', 'fake_B', 'real_B', 'loss_3d_face_part_segmentation_de']
         # self.visual_names = ['fake_Texture', 'fake_B', 'real_B']
         # specify the models you want to save to the disk. The training/test scripts will call <BaseModel.save_networks> and <BaseModel.load_networks>
         if self.isTrain:
@@ -122,8 +122,8 @@ class separatedcgmodel(BaseModel):
             self.criterionGAN = networks.GANLoss(opt.gan_mode, soft_labels=self.opt.soft_labels).to(self.device)
             self.criterionL1 = torch.nn.L1Loss(reduction='none')
             # self.CrossEntropyCriterion = torch.nn.CrossEntropyLoss(reduction='none')
-            self.CrossEntropyCriterion1 =  torch.nn.NLLLoss(reduction='none')
-            self.CrossEntropyCriterion2 =  torch.nn.L1Loss(reduction='none')
+            self.CrossEntropyCriterion1 = torch.nn.NLLLoss(reduction='none')
+            self.CrossEntropyCriterion2 = torch.nn.L1Loss(reduction='none')
 
             self.criterionBCE = torch.nn.BCELoss(reduction='none')
 
@@ -190,7 +190,8 @@ class separatedcgmodel(BaseModel):
         )
         import cv2
 
-        segmentation_texture_map = cv2.imread(str(Path('resources') / 'part_segmentation_map_2048_gray_n_h.png'))[...,
+        # segmentation_texture_map = cv2.imread(str(Path('resources') / 'part_segmentation_map_2048_gray_n_h.png'))[...,
+        segmentation_texture_map = cv2.imread(str(Path('resources') / 'Color_Map_Sag_symmetric.png'))[...,
                                    ::-1].astype(np.uint8)
         import matplotlib.pyplot as plt
         plt.imshow(segmentation_texture_map)
@@ -245,7 +246,7 @@ class separatedcgmodel(BaseModel):
         self.real_B = input['B' if AtoB else 'A'].to(self.device)
         self.true_flame_params = input['true_flame_params']
         for k in self.true_flame_params.keys():
-            self.true_flame_params[k] =  self.true_flame_params[k].to(self.device)
+            self.true_flame_params[k] = self.true_flame_params[k].to(self.device)
         self.silh = input['silh'].to(self.device)
         self.true_mask = input['true_mask'].to(self.device)
 
@@ -327,9 +328,9 @@ class separatedcgmodel(BaseModel):
                 mesh = load_objs_as_meshes([direc / 'mesh.obj'], device=self.device)
                 vertices = mesh.verts_padded()
         # final_obj = os.path.join('out/', 'final_model.obj')
-        import datetime
-        now = datetime.datetime.now()
-        final_obj = f'{self.save_dir}/web/images/{now.strftime("%Y-%m-%d_%H:%M:%S")}_fake_mesh.obj'
+        # import datetime
+        # now = datetime.datetime.now()
+        # final_obj = f'{self.save_dir}/web/images/{now.strftime("%Y-%m-%d_%H:%M:%S")}_fake_mesh.obj'
         # final_obj = f'{self.save_dir}/web/images/{self.opt.epoch_count:03d}_fake_mesh.obj'
         # save_obj(final_obj, vertices[0], torch.from_numpy(self.flamelayer.faces.astype(np.int32)))
         self.estimated_texture_map = texture_map.permute(0, 2, 3, 1)
@@ -344,13 +345,13 @@ class separatedcgmodel(BaseModel):
         silhouette_images = self.silhouette_renderer(self.estimated_mesh, materials=self.materials)[..., 3].unsqueeze(0)
         negative_silhouette_images = self.negative_silhouette_renderer(self.estimated_mesh, materials=self.materials)[
             ..., 3].unsqueeze(0)
-        transforms.ToPILImage()(silhouette_images
-                                .squeeze().permute(0, 1).cpu()).save('out/silhouette.png')
-        # transforms.ToPILImage()(images
-        #                         .squeeze().permute(2, 0, 1).cpu()).save('out/img.png')
+        if self.opt.verbose:
+            transforms.ToPILImage()(silhouette_images.squeeze().permute(0, 1).cpu()).save('out/silhouette.png')
+            # transforms.ToPILImage()(images.squeeze().permute(2, 0, 1).cpu()).save('out/img.png')
         cull_backfaces_mask = (1 - (silhouette_images - negative_silhouette_images).abs())
         img = (images[0][..., :3].detach().cpu().numpy() * 255).astype(np.uint8)
-        Image.fromarray(img).save('out/test1.png')
+        if self.opt.verbose:
+            Image.fromarray(img).save('out/test1.png')
         images = self.Normalize(images)
         silhouette_images = silhouette_images.clamp(0, 1)
         segmented_3d_model_image = self.segmentation_3d_renderer(self.estimated_mesh)
@@ -358,8 +359,7 @@ class separatedcgmodel(BaseModel):
         #     ((255 * segmentation_image[0, ..., :3]).squeeze().detach().cpu().numpy().astype(np.uint8))).save(
         #     str('out/segmentatino_texture.png')
         # )
-        return images[..., :3].permute(0, 3, 1, 2), silhouette_images, cull_backfaces_mask, segmented_3d_model_image[
-                                                                                            ..., :3].permute(0, 3, 1, 2)
+        return images[..., :3].permute(0, 3, 1, 2), silhouette_images, cull_backfaces_mask, segmented_3d_model_image[..., :3].permute(0, 3, 1, 2)
 
     def UnNormalize(self, img):
         return img * 0.5 + 0.5
@@ -477,52 +477,53 @@ class separatedcgmodel(BaseModel):
         self.loss_silhouette = self.rect_mask.squeeze()[0] * self.criterionBCE(
             self.rect_mask.squeeze()[0] * self.fake_B_silhouette.squeeze(),
             self.rect_mask.squeeze()[0] * self.true_mask.squeeze())
-
-        transforms.ToPILImage()(255 * self.loss_silhouette.cpu()).save('out/loss_silhouette.png')
-        transforms.ToPILImage()(self.segmented_3d_model_image.cpu().squeeze()/255).save('out/segmentatino_texture.png')
-        transforms.ToPILImage()(self.real_B_seg.cpu().squeeze() / 255).save('out/real_B_seg_cat.png')
+        if self.opt.verbose:
+            transforms.ToPILImage()(255 * self.loss_silhouette.cpu()).save('out/loss_silhouette.png')
+            transforms.ToPILImage()(self.segmented_3d_model_image.cpu().squeeze() / 255).save('out/segmentatino_texture.png')
+            transforms.ToPILImage()(self.real_B_seg.cpu().squeeze() / 255).save('out/real_B_seg_cat.png')
         eta = 0.01
         self.loss_silhouette = self.loss_silhouette.sum() * self.opt.lambda_silhouette
         self.segmented_3d_one_hot_model_image = torch.nn.functional.one_hot(
-            (self.segmented_3d_model_image[:, 0, :, :]).long()).float().permute(0,3,1,2)
+            (self.segmented_3d_model_image[:, 0, :, :]).long()).float().permute(0, 3, 1, 2)
         self.segmented_3d_one_hot_model_image[self.segmented_3d_one_hot_model_image == 0] = self.segmented_3d_one_hot_model_image[self.segmented_3d_one_hot_model_image == 0] + eta
         # self.segmented_3d_one_hot_model_image[self.segmented_3d_one_hot_model_image == 1] = self.segmented_3d_one_hot_model_image[self.segmented_3d_one_hot_model_image == 1] - eta
-        self.loss_3d_face_part_segmentation = self.CrossEntropyCriterion1(torch.log(self.segmented_3d_one_hot_model_image),
-                                   self.real_B_seg.long()) * self.opt.lambda_face_seg
+        self.loss_3d_face_part_segmentation = self.CrossEntropyCriterion1(
+            torch.log(self.segmented_3d_one_hot_model_image),
+            self.real_B_seg.long()) * self.opt.lambda_face_seg
         self.loss_3d_face_part_segmentation_de = self.loss_3d_face_part_segmentation.clamp(0, 255).unsqueeze(0) * 1000
 
         # self.loss_3d_face_part_segmentation = self.CrossEntropyCriterion2(self.segmented_3d_model_image[:, 0, :, :],
         #                                                                  self.real_B_seg.float()) * self.opt.lambda_face_seg
         # self.loss_3d_face_part_segmentation_de = self.loss_3d_face_part_segmentation.clamp(0,255).unsqueeze(0) / 255
         # transforms.ToPILImage()(self.loss_3d_face_part_segmentation_de.cpu().squeeze()).save('out/loss_3d_face_part_segmentation.png')
+        if self.opt.verbose:
+            transforms.ToPILImage()(self.loss_3d_face_part_segmentation_de.cpu().squeeze()).save('out/loss_3d_face_part_segmentation_de.png')
 
-        transforms.ToPILImage()(self.loss_3d_face_part_segmentation_de.cpu().squeeze()).save('out/loss_3d_face_part_segmentation_de.png')
-
-        self.loss_3d_face_part_segmentation = self.loss_3d_face_part_segmentation.sum() *100#* self.opt.lambda_face_seg
+        self.loss_3d_face_part_segmentation = self.loss_3d_face_part_segmentation.sum() * 100  # * self.opt.lambda_face_seg
 
         # self.loss_2d_face_part_segmentation = self.CrossEntropyCriterion(self.fake_B_seg,
         #                                                                  self.real_B_seg.long()) * self.opt.lambda_face_seg
         # combine loss and calculate gradients
-        self.loss_G = self.loss_G_GAN + self.loss_G_L1 + self.loss_F_Reg + self.loss_3d_face_part_segmentation#+ self.loss_silhouette   + self.loss_face_part_segmentation
+        self.loss_G = self.loss_G_GAN + self.loss_G_L1 + self.loss_F_Reg + self.loss_3d_face_part_segmentation  # + self.loss_silhouette   + self.loss_face_part_segmentation
         # self.loss_G =  self.loss_F_Reg + self.loss_3d_face_part_segmentation#+ self.loss_silhouette   + self.loss_face_part_segmentation
         self.loss_G.backward()
 
     def perform_face_part_segmentation(self, input_img, fname='seg'):
         segmentation_parts_dict = {'skin': 1,
-                                   'r_eyebrow':2,
-                                   'l_eyebrow':3,
-                                   'r_eye':4,
-                                   'l_eye':5,
-                                   'r_ear':7,
-                                   'l_ear':8,
-                                   'nose':10,
-                                   'mouth':11,
-                                   'u_lip':12,
-                                   'l_lip':13,
-                                   'neck':14,
-                                   'cloth':16,
-                                   'hair':17,
-                                   'hat':18,
+                                   'r_eyebrow': 2,
+                                   'l_eyebrow': 3,
+                                   'r_eye': 4,
+                                   'l_eye': 5,
+                                   'r_ear': 7,
+                                   'l_ear': 8,
+                                   'nose': 10,
+                                   'mouth': 11,
+                                   'u_lip': 12,
+                                   'l_lip': 13,
+                                   'neck': 14,
+                                   'cloth': 16,
+                                   'hair': 17,
+                                   'hat': 18,
                                    }
         real_un = self.UnNormalize(input_img).squeeze()
         tt = transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
@@ -533,13 +534,11 @@ class separatedcgmodel(BaseModel):
         out = self.face_parts_segmentation(img)
         parsing = out.squeeze(0).detach().cpu().numpy().argmax(0)
         # print(parsing)
-        visualize = True  # TODO
-        if visualize:
-            # print(np.unique(parsing))
-            image = transforms.ToPILImage()(self.UnNormalize(input_img).squeeze().detach().cpu()).resize((512, 512),
-                                                                                                   Image.BILINEAR)
-            self.face_parts_segmentation.vis_parsing_maps(image, parsing, stride=1, save_im=True,
-                                                          save_path=f'out/{fname}.png')
+        # visualize = True  # TODO
+        # if visualize:
+        if self.opt.verbose:
+            image = transforms.ToPILImage()(self.UnNormalize(input_img).squeeze().detach().cpu()).resize((512, 512),Image.BILINEAR)
+            self.face_parts_segmentation.vis_parsing_maps(image, parsing, stride=1, save_im=True,save_path=f'out/{fname}.png')
         out = F.interpolate(out, (self.opt.crop_size, self.opt.crop_size))
         argmax_tensor = torch.argmax(out, dim=1)
         argmax_tensor[argmax_tensor == segmentation_parts_dict['r_eye']] = segmentation_parts_dict['l_eye']

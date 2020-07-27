@@ -73,10 +73,10 @@ for sp in splits:
                 pool.apply_async(image_write, args=(path_A, path_B, path_C, path_ABC))
             else:
                 im_A = cv2.imread(path_A, 1)  # python2: cv2.CV_LOAD_IMAGE_COLOR; python3: cv2.IMREAD_COLOR
-                # im_B = cv2.imread(path_B, 1)  # python2: cv2.CV_LOAD_IMAGE_COLOR; python3: cv2.IMREAD_COLOR
-                im_C = cv2.imread(path_B, 1)  # python2: cv2.CV_LOAD_IMAGE_COLOR; python3: cv2.IMREAD_COLOR
-                # im_ABC = np.concatenate([im_A, im_B, im_C], 1)
-                im_ABC = np.concatenate([im_A, im_C], 1)
+                im_B = cv2.imread(path_B, 1)  # python2: cv2.CV_LOAD_IMAGE_COLOR; python3: cv2.IMREAD_COLOR
+                im_C = cv2.imread(path_C, 1)  # python2: cv2.CV_LOAD_IMAGE_COLOR; python3: cv2.IMREAD_COLOR
+                im_ABC = np.concatenate([im_A, im_B, im_C], 1)
+                # im_ABC = np.concatenate([im_A, im_C], 1)
                 cv2.imwrite(path_ABC, im_ABC)
                 if args.use_metadata:
                     im_sil = cv2.imread(str(Path(path_C).parent / f'{Path(path_C).stem}_rendered_silhouette.jpg'))
