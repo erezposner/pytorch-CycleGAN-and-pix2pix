@@ -62,7 +62,17 @@ class FlameDecoder(nn.Module):
 
         self.register_buffer('lbs_weights',
                              to_tensor(to_np(self.flame_model.weights), dtype=self.dtype))
+    def extract_vertices_uv_correspondence_for_tb(self,estimated_mesh,estimated_texture_map):
+        # vertices_tensor = estimated_mesh.verts_padded()
 
+
+        faces = self.faces.astype(np.int32).flatten()
+        faces_uvs_packed = estimated_mesh.textures.faces_uvs_packed().cpu().numpy().flatten()
+        zipped = np.concatenate((faces[:, None], faces_uvs_packed[:, None]), axis=1)
+
+        vertices_uv_correspondence = np.unique(zipped, axis=0)
+
+        return vertices_uv_correspondence
     def forward(self, shape_params=None, expression_params=None, pose_params=None, neck_pose=None, transl=None,
                 eye_pose=None):
         """

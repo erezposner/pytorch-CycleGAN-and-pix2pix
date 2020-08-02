@@ -22,7 +22,7 @@ class FacePartSegmentation(nn.Module):
         # parsing = out.squeeze(0).cpu().numpy().argmax(0)
         # # print(parsing)
         # print(np.unique(parsing))
-        # image = transforms.ToPILImage()(self.UnNormalize(real).squeeze().detach().cpu()).resize((512, 512),
+        # image = transforms.ToPILImage()(UnNormalize(real).squeeze().detach().cpu()).resize((512, 512),
         #                                                                                         Image.BILINEAR)
         # vis_parsing_maps(image, parsing, stride=1, save_im=True, save_path='out/seg.png')
         return out

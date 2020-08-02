@@ -13,6 +13,7 @@ from . import util, html
 from subprocess import Popen, PIPE
 from PIL import Image
 from pathlib import Path
+import matplotlib.pyplot as plt
 
 
 def save_images(webpage, visuals, image_path, aspect_ratio=1.0, width=256):
@@ -71,7 +72,8 @@ class TensorBoardVisualizer():
         self.port = opt.display_port
         self.saved = False
         existing_folders = len(list(Path(opt.logs_folder).glob(f'*{self.name}*')))
-        self.writer = SummaryWriter(f'{opt.logs_folder}/{self.name}_experiment_{existing_folders}')
+        self.writer = SummaryWriter(f'{opt.logs_folder}/{self.name}_exp_{existing_folders}')
+        print(f'Visualizer Tensorboard is exporting to folder {opt.logs_folder}/{self.name}_exp_{existing_folders} . . .')
         if self.display_id > 0:  # connect to a visdom server given <display_port> and <display_server>
             # import visdom
             self.ncols = opt.display_ncols
@@ -79,7 +81,7 @@ class TensorBoardVisualizer():
             # if not self.vis.check_connection():
             #     self.create_visdom_connections()
 
-        # if self.use_html:  # create an HTML object at <checkpoints_dir>/web/; images will be saved under <checkpoints_dir>/web/images/
+            # if self.use_html:  # create an HTML object at <checkpoints_dir>/web/; images will be saved under <checkpoints_dir>/web/images/
             self.web_dir = os.path.join(opt.checkpoints_dir, opt.name, 'web')
             self.img_dir = os.path.join(self.web_dir, 'images')
         #     print('create web directory %s...' % self.web_dir)
@@ -94,14 +96,25 @@ class TensorBoardVisualizer():
         """Reset the self.saved status"""
         self.saved = False
 
-    # def create_visdom_connections(self):
-    #     """If the program could not connect to Visdom server, this function will start a new server at port < self.port > """
-    #     cmd = sys.executable + ' -m visdom.server -p %d &>/dev/null &' % self.port
-    #     print('\n\nCould not connect to Visdom server. \n Trying to start a server....')
-    #     print('Command: %s' % cmd)
-    #     Popen(cmd, shell=True, stdout=PIPE, stderr=PIPE)
 
-    def display_current_results(self, visuals, epoch, save_result):
+    def display_estimated_mesh(self, epoch, flamelayer, estimated_mesh, estimated_texture_map, tag='mesh'):
+        vertices_tensor = estimated_mesh.verts_padded()
+        faces_tensor = torch.tensor(np.int32(flamelayer.faces), dtype=torch.long).cuda().unsqueeze(0)
+
+        colors_tensor = torch.zeros(vertices_tensor.shape)
+        verts_uvs = 1 - estimated_mesh.textures.verts_uvs_packed()
+        verts_uvs_un = (verts_uvs * estimated_texture_map.shape[1] - 1).long()
+        vertices_uv_correspondence = flamelayer.extract_vertices_uv_correspondence_for_tb(estimated_mesh, estimated_texture_map)
+        for i in range(vertices_uv_correspondence.shape[0]):
+            colors_tensor[0, vertices_uv_correspondence[i, 0], :] = estimated_texture_map[0, verts_uvs_un[vertices_uv_correspondence[i, 1], 1],
+                                                                    verts_uvs_un[vertices_uv_correspondence[i, 1], 0],
+                                                                    :].float() * 255
+
+        self.writer.add_mesh(tag, vertices=vertices_tensor, colors=colors_tensor, faces=faces_tensor, global_step=epoch)
+
+
+
+    def display_current_results(self, visuals, epoch, save_result, additional_visuals=None):
         """Display current results on visdom; save current results to an HTML file.
 
         Parameters:
@@ -109,7 +122,10 @@ class TensorBoardVisualizer():
             epoch (int) - - the current epoch
             save_result (bool) - - if save the current results to an HTML file
         """
-        import matplotlib.pyplot as plt
+
+        self.display_estimated_mesh(epoch, additional_visuals['flamelayer'], additional_visuals['estimated_mesh'], additional_visuals['estimated_texture_map'], 'estimated_mesh')
+        self.display_estimated_mesh(epoch, additional_visuals['flamelayer'], additional_visuals['true_mesh'], additional_visuals['true_mesh'].textures.maps_padded(), 'true_mesh')
+
         if self.display_id > 0:  # show images in the browser using visdom
             ncols = self.ncols
             f = plt.figure(figsize=(15, 15))
@@ -131,7 +147,7 @@ class TensorBoardVisualizer():
                 for label, image in visuals.items():
                     image_numpy = util.tensor2im(image)
                     # label_html_row += '<td>%s</td>' % label
-                    a = f.add_subplot(rows, ncols, idx+1)
+                    a = f.add_subplot(rows, ncols, idx + 1)
                     a.set_title(f'{label}')
                     plt.imshow(image_numpy, cmap="jet")
 
@@ -145,9 +161,9 @@ class TensorBoardVisualizer():
                 self.writer.add_figure('phase', f, epoch)
 
                 # while idx % ncols != 0:
-                    # images.append(white_image)
-                    # label_html_row += '<td></td>'
-                    # idx += 1
+                # images.append(white_image)
+                # label_html_row += '<td></td>'
+                # idx += 1
                 # if label_html_row != '':
                 #     label_html += '<tr>%s</tr>' % label_html_row
                 # try:
@@ -214,7 +230,6 @@ class TensorBoardVisualizer():
             # self.writer.add_scalar(f'data/{k}', torch.from_numpy(np.array(losses[k])), self.plot_data['X'][-1])
         # print(self.plot_data['X'][-1])
         self.writer.add_scalars('data/scalar_group', d, self.plot_data['X'][-1])
-
 
     # losses: same format as |losses| of plot_current_losses
     def print_current_losses(self, epoch, iters, losses, t_comp, t_data):

@@ -1,3 +1,5 @@
+from torch.utils.tensorboard import SummaryWriter
+
 from models.FlameDecoder import FlameDecoder
 from types import SimpleNamespace
 from pathlib import Path
@@ -11,7 +13,7 @@ from PIL import Image
 import os
 import numpy as np
 
-config = SimpleNamespace(batch_size=1, flame_model_path='./smpl_model/male_model.pkl')
+config = SimpleNamespace(batch_size=1, flame_model_path='./smpl_model/flame2020/male_model.pkl')
 
 flamelayer = FlameDecoder(config)
 flamelayer.cuda()
@@ -45,3 +47,21 @@ final_obj = os.path.join('out/', 'final_model.obj')
 save_obj(final_obj, estimated_mesh.verts_packed(), torch.from_numpy(flamelayer.faces.astype(np.int32)),
          verts_uvs=estimated_mesh.textures.verts_uvs_packed(), texture_map=estimated_texture_map,
          faces_uvs=estimated_mesh.textures.faces_uvs_packed())
+existing_folders = len(list(Path('runs').glob(f'*test_experiment_*')))
+
+writer = SummaryWriter(f'runs/test_experiment_{existing_folders}')
+
+## write to tensorboard
+vertices_tensor = estimated_mesh.verts_padded()
+faces_tensor = torch.tensor(np.int32(flamelayer.faces), dtype=torch.long).cuda().unsqueeze(0)
+
+colors_tensor = torch.zeros(vertices_tensor.shape)
+verts_uvs = 1 - estimated_mesh.textures.verts_uvs_packed()
+verts_uvs_un = (verts_uvs * estimated_texture_map.shape[1] - 1).long()
+vertices_uv_correspondence = flamelayer.extract_vertices_uv_correspondence_for_tb(estimated_mesh, estimated_texture_map)
+for i in range(vertices_uv_correspondence.shape[0]):
+    colors_tensor[0, vertices_uv_correspondence[i, 0], :] = estimated_texture_map[0, verts_uvs_un[vertices_uv_correspondence[i, 1], 1], verts_uvs_un[vertices_uv_correspondence[i, 1], 0],
+                                                            :].float() * 255
+
+writer.add_mesh('my_mesh11', vertices=vertices_tensor, colors=colors_tensor, faces=faces_tensor)
+writer.flush()

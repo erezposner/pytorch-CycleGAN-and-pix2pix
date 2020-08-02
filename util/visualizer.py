@@ -95,7 +95,7 @@ class Visualizer():
         print('Command: %s' % cmd)
         Popen(cmd, shell=True, stdout=PIPE, stderr=PIPE)
 
-    def display_current_results(self, visuals, epoch, save_result):
+    def display_current_results(self, visuals, epoch, save_result,additional_visuals = None):
         """Display current results on visdom; save current results to an HTML file.
 
         Parameters:

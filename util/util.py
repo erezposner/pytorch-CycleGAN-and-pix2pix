@@ -6,6 +6,12 @@ from PIL import Image
 import os
 
 
+def UnNormalize(img):
+    return img * 0.5 + 0.5
+
+
+def Normalize( img):
+    return (img - 0.5) / 0.5
 def tensor2im(input_image, imtype=np.uint8):
     """"Converts a Tensor array into a numpy image array.
 

@@ -6,6 +6,8 @@ from pytorch3d.renderer import MeshRenderer, MeshRasterizer, PointLights, Textur
 from pytorch3d.renderer.mesh.shader import UVsCorrespondenceShader
 from pytorch3d.structures import Textures
 import numpy as np
+
+from util.util import UnNormalize, Normalize
 from .base_model import BaseModel
 from . import networks
 from .FlameDecoder import FlameDecoder
@@ -71,7 +73,7 @@ class separatedcgmodel(BaseModel):
             opt (Option class)-- stores all the experiment flags; needs to be a subclass of BaseOptions
         """
         BaseModel.__init__(self, opt)
-        config = SimpleNamespace(batch_size=self.opt.batch_size, flame_model_path='./smpl_model/male_model.pkl')
+        config = SimpleNamespace(batch_size=self.opt.batch_size, flame_model_path='./smpl_model/flame2020/male_model.pkl')
 
         self.flamelayer = FlameDecoder(config)
         self.flamelayer.cuda()
@@ -352,7 +354,7 @@ class separatedcgmodel(BaseModel):
         img = (images[0][..., :3].detach().cpu().numpy() * 255).astype(np.uint8)
         if self.opt.verbose:
             Image.fromarray(img).save('out/test1.png')
-        images = self.Normalize(images)
+        images = Normalize(images)
         silhouette_images = silhouette_images.clamp(0, 1)
         segmented_3d_model_image = self.segmentation_3d_renderer(self.estimated_mesh)
         # Image.fromarray(
@@ -401,10 +403,10 @@ class separatedcgmodel(BaseModel):
                                                                          base_flame_params=self.true_flame_params,
                                                                          use_fix_params=zero_out_estimated_geomtery)
 
-            # self.fake_B = self.project_to_image_plane(self.fake_geo_from_flame, self.UnNormalize(self.real_A))
+            # self.fake_B = self.project_to_image_plane(self.fake_geo_from_flame, UnNormalize(self.real_A))
             self.fake_B, self.fake_B_silhouette, self.cull_backfaces_mask, self.segmented_3d_model_image = self.project_to_image_plane(
                 self.fake_geo_from_flame,
-                self.UnNormalize(self.fake_Texture))
+                UnNormalize(self.fake_Texture))
         else:
             self.fake_B = self.netG(self.real_A)  # G(Texture)
         # with torch.no_grad(): #TODO check test or remove
@@ -525,7 +527,7 @@ class separatedcgmodel(BaseModel):
                                    'hair': 17,
                                    'hat': 18,
                                    }
-        real_un = self.UnNormalize(input_img).squeeze()
+        real_un = UnNormalize(input_img).squeeze()
         tt = transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
         real_un = F.interpolate(real_un.unsqueeze(0), (512, 512))
         img = tt(real_un.squeeze()).unsqueeze(0)
@@ -537,7 +539,7 @@ class separatedcgmodel(BaseModel):
         # visualize = True  # TODO
         # if visualize:
         if self.opt.verbose:
-            image = transforms.ToPILImage()(self.UnNormalize(input_img).squeeze().detach().cpu()).resize((512, 512),Image.BILINEAR)
+            image = transforms.ToPILImage()(UnNormalize(input_img).squeeze().detach().cpu()).resize((512, 512),Image.BILINEAR)
             self.face_parts_segmentation.vis_parsing_maps(image, parsing, stride=1, save_im=True,save_path=f'out/{fname}.png')
         out = F.interpolate(out, (self.opt.crop_size, self.opt.crop_size))
         argmax_tensor = torch.argmax(out, dim=1)
@@ -554,8 +556,8 @@ class separatedcgmodel(BaseModel):
         self.real_B_seg[self.real_B_seg == 11] = 0
         self.fake_B_seg, _ = self.perform_face_part_segmentation(self.fake_B, fname='fake_B_seg')
 
-        self.fake_B = self.Normalize(self.UnNormalize(self.fake_B) * self.rect_mask)
-        self.real_B = self.Normalize(self.UnNormalize(self.real_B) * self.rect_mask)
+        self.fake_B = Normalize(UnNormalize(self.fake_B) * self.rect_mask)
+        self.real_B = Normalize(UnNormalize(self.real_B) * self.rect_mask)
 
         self.segmented_3d_model_image = self.segmented_3d_model_image * self.rect_mask[:, 0, ...]
         self.real_B_seg = self.real_B_seg * self.rect_mask[:, 0, ...]

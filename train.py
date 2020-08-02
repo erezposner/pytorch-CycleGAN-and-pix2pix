@@ -21,7 +21,6 @@ See frequently asked questions at: https://github.com/junyanz/pytorch-CycleGAN-a
 import time
 import os
 
-import torch
 from pytorch3d.io import save_obj
 import numpy as np
 from options.train_options import TrainOptions
@@ -29,12 +28,17 @@ from data import create_dataset
 from models import create_model
 from util.tensorboard_visualizer import TensorBoardVisualizer
 from util.visualizer import Visualizer
+from torch.utils.tensorboard import SummaryWriter
+import torch, gc
 
 # import os
 # os.seteuid(1000)
 # TODO don't forget to run container and run python -m visdom.server
 if __name__ == '__main__':
-    from torch.utils.tensorboard import SummaryWriter
+
+
+    gc.collect()
+    torch.cuda.empty_cache()
 
     # default `log_dir` is "runs" - we'll be more specific here
 
@@ -61,7 +65,7 @@ if __name__ == '__main__':
         iter_data_time = time.time()  # timer for data loading per iteration
         epoch_iter = 0  # the number of training iterations in current epoch, reset to 0 every epoch
         visualizer.reset()  # reset the visualizer: make sure it saves the results to HTML at least once every epoch
-        overfit_one_sample = True
+        overfit_one_sample = False
         for i, data in enumerate(dataset):  # inner loop within one epoch
             # writer.add_scalar("Loss/train", i, epoch)
 
@@ -77,7 +81,7 @@ if __name__ == '__main__':
             if total_iters % opt.display_freq == 0 or overfit_one_sample:  # display images on visdom and save images to a HTML file
                 save_result = total_iters % opt.update_html_freq == 0
                 model.compute_visuals()
-                visualizer.display_current_results(model.get_current_visuals(), epoch, save_result)
+                visualizer.display_current_results(model.get_current_visuals(), epoch, save_result,model.get_additional_visuals())
 
                 try:
                     final_obj = os.path.join(visualizer.img_dir, 'epoch%.3d_%s.obj' % (epoch, 'mesh'))
@@ -105,7 +109,7 @@ if __name__ == '__main__':
 
             iter_data_time = time.time()
             if overfit_one_sample:
-                if i>=1:
+                if i>=0:
                     break
 
         if epoch % opt.save_epoch_freq == 0:  # cache our model every <save_epoch_freq> epochs

@@ -28,7 +28,9 @@ for mode in modes:
     output_B_folder.mkdir(parents=True, exist_ok=True)
     output_C_folder.mkdir(parents=True, exist_ok=True)
 for ind, sample in enumerate(samples):
-    mode = modes[np.random.randint(0, 3)]
+    # mode = modes[np.random.randint(0, 3)]
+    sampled_mode_index = np.random.choice(a=[0, 1, 2], p=[0.7, 0.15, 0.15])
+    mode = modes[sampled_mode_index]
     output_A_folder = (dataset_output_path / 'A' / mode)
     output_B_folder = (dataset_output_path / 'B' / mode)
     output_C_folder = (dataset_output_path / 'C' / mode)
