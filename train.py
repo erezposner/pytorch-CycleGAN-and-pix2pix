@@ -33,19 +33,17 @@ import torch, gc
 
 # import os
 # os.seteuid(1000)
-# TODO don't forget to run container and run python -m visdom.server
+# TODO don't forget to run container and run python -m visdom.server OR tensorboard --logdir=runs --bind_all
 if __name__ == '__main__':
-
 
     gc.collect()
     torch.cuda.empty_cache()
 
     # default `log_dir` is "runs" - we'll be more specific here
 
-
     opt = TrainOptions().parse()  # get training options
     opt.no_flip = True
-    opt.serial_batches = True  # TODO change back when training
+    # opt.serial_batches = True  # TODO change back when training
     dataset = create_dataset(opt)  # create a dataset given opt.dataset_mode and other options
     dataset_size = len(dataset)  # get the number of images in the dataset.
     print('The number of training images = %d' % dataset_size)
@@ -58,7 +56,7 @@ if __name__ == '__main__':
         visualizer = Visualizer(opt)  # create a visualizer that display/save images and plots
 
     total_iters = 0  # the total number of training iterations
-    #torch.autograd.set_detect_anomaly(True)
+    # torch.autograd.set_detect_anomaly(True)
     for epoch in range(opt.epoch_count,
                        opt.n_epochs + opt.n_epochs_decay + 1):  # outer loop for different epochs; we save the model by <epoch_count>, <epoch_count>+<save_latest_freq>
         epoch_start_time = time.time()  # timer for entire epoch
@@ -81,15 +79,16 @@ if __name__ == '__main__':
             if total_iters % opt.display_freq == 0 or overfit_one_sample:  # display images on visdom and save images to a HTML file
                 save_result = total_iters % opt.update_html_freq == 0
                 model.compute_visuals()
-                visualizer.display_current_results(model.get_current_visuals(), epoch, save_result,model.get_additional_visuals())
+                visualizer.display_current_results(model.get_current_visuals(), epoch+epoch_iter, save_result, model.get_additional_visuals())
 
                 try:
-                    final_obj = os.path.join(visualizer.img_dir, 'epoch%.3d_%s.obj' % (epoch, 'mesh'))
-                    save_obj(final_obj, model.estimated_mesh.verts_packed(),
-                             torch.from_numpy(model.flamelayer.faces.astype(np.int32)),
-                             verts_uvs=model.estimated_mesh.textures.verts_uvs_packed(),
-                             texture_map=model.estimated_texture_map,
-                             faces_uvs=model.estimated_mesh.textures.faces_uvs_packed())
+                    if save_result:
+                        final_obj = os.path.join(visualizer.img_dir, 'epoch%.3d_%s.obj' % (epoch+epoch_iter, 'mesh'))
+                        save_obj(final_obj, model.estimated_mesh.verts_packed(),
+                                 torch.from_numpy(model.flamelayer.faces.astype(np.int32)),
+                                 verts_uvs=model.estimated_mesh.textures.verts_uvs_packed(),
+                                 texture_map=model.estimated_texture_map,
+                                 faces_uvs=model.estimated_mesh.textures.faces_uvs_packed())
                 except:
                     pass
             if total_iters % opt.print_freq == 0 or overfit_one_sample:  # print training losses and save logging information to the disk
@@ -97,10 +96,8 @@ if __name__ == '__main__':
                 t_comp = (time.time() - iter_start_time) / opt.batch_size
                 visualizer.print_current_losses(epoch, epoch_iter, losses, t_comp, t_data)
 
-
                 if opt.display_id > 0:
                     visualizer.plot_current_losses(epoch, float(epoch_iter) / dataset_size, losses)
-
 
             if total_iters % opt.save_latest_freq == 0 or overfit_one_sample:  # cache our latest model every <save_latest_freq> iterations
                 print('saving the latest model (epoch %d, total_iters %d)' % (epoch, total_iters))
@@ -109,7 +106,7 @@ if __name__ == '__main__':
 
             iter_data_time = time.time()
             if overfit_one_sample:
-                if i>=0:
+                if i >= 0:
                     break
 
         if epoch % opt.save_epoch_freq == 0:  # cache our model every <save_epoch_freq> epochs
@@ -120,4 +117,3 @@ if __name__ == '__main__':
         print('End of epoch %d / %d \t Time Taken: %d sec' % (
             epoch, opt.n_epochs + opt.n_epochs_decay, time.time() - epoch_start_time))
         model.update_learning_rate()  # update learning rates at the end of every epoch.
-

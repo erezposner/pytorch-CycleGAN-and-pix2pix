@@ -72,7 +72,7 @@ class TensorBoardVisualizer():
         self.port = opt.display_port
         self.saved = False
         existing_folders = len(list(Path(opt.logs_folder).glob(f'*{self.name}*')))
-        self.writer = SummaryWriter(f'{opt.logs_folder}/{self.name}_exp_{existing_folders}')
+        self.writer = SummaryWriter(f'{opt.logs_folder}/{self.name}_exp_{existing_folders}',flush_secs=60)
         print(f'Visualizer Tensorboard is exporting to folder {opt.logs_folder}/{self.name}_exp_{existing_folders} . . .')
         if self.display_id > 0:  # connect to a visdom server given <display_port> and <display_server>
             # import visdom
@@ -122,9 +122,11 @@ class TensorBoardVisualizer():
             epoch (int) - - the current epoch
             save_result (bool) - - if save the current results to an HTML file
         """
-
-        self.display_estimated_mesh(epoch, additional_visuals['flamelayer'], additional_visuals['estimated_mesh'], additional_visuals['estimated_texture_map'], 'estimated_mesh')
-        self.display_estimated_mesh(epoch, additional_visuals['flamelayer'], additional_visuals['true_mesh'], additional_visuals['true_mesh'].textures.maps_padded(), 'true_mesh')
+        try:
+            self.display_estimated_mesh(epoch, additional_visuals['flamelayer'], additional_visuals['estimated_mesh'], additional_visuals['estimated_texture_map'], 'estimated_mesh')
+            self.display_estimated_mesh(epoch, additional_visuals['flamelayer'], additional_visuals['true_mesh'], additional_visuals['true_mesh'].textures.maps_padded(), 'true_mesh')
+        except:
+            pass
 
         if self.display_id > 0:  # show images in the browser using visdom
             ncols = self.ncols

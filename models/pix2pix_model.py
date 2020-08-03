@@ -36,7 +36,10 @@ class Pix2PixModel(BaseModel):
             parser.add_argument('--lambda_L1', type=float, default=25.0, help='weight for L1 loss')
 
         return parser
+    def get_additional_visuals(self):
 
+
+        return None
     def __init__(self, opt):
         """Initialize the pix2pix class.
 
