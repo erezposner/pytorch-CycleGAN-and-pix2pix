@@ -434,7 +434,7 @@ class HybridModel(BaseModel):
                 xv = xv.unsqueeze(0).unsqueeze(0) / 127.5 - 1
                 yv = yv.unsqueeze(0).unsqueeze(0) / 127.5 - 1
                 uvs_init = torch.cat((xv, yv), 1).permute(0, 2, 3, 1).to(self.device)
-                self.warped_input_texture_map = F.grid_sample(self.real_A, uvs_init + flow_field.permute(0, 2, 3, 1) / 1, align_corners=True)
+                self.warped_input_texture_map = F.grid_sample(self.real_A, uvs_init + flow_field.permute(0, 2, 3, 1) / 10, align_corners=True)
                 self.fake_Texture = fake_Texture_gen + self.warped_input_texture_map
                 # self.fake_Texture = fake_Texture_gen + F.grid_sample(self.real_A, uvs_init ,align_corners=True)
                 # self.fake_Texture = F.grid_sample(self.real_A, uvs_init + self.uvs.permute(0, 2, 3, 1) / 10)
@@ -574,7 +574,7 @@ class HybridModel(BaseModel):
         b_segmented_ears_colored_variance = b_segmented_ears_colored_variance[b_segmented_ears_colored_variance > 0].var()
 
         self.loss_segmented_ears_colored_variance = (r_segmented_ears_colored_variance + g_segmented_ears_colored_variance + b_segmented_ears_colored_variance) * 100
-        #endregion
+        # endregion
         self.loss_G_L1 = self.loss_G_L1_reducted.abs().sum() * self.opt.lambda_L1
         # self.loss_2d_face_part_segmentation = self.CrossEntropyCriterion(self.fake_B_seg,
         #                                                                  self.real_B_seg.long()) * self.opt.lambda_face_seg

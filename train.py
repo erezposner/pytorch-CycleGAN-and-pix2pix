@@ -79,11 +79,11 @@ if __name__ == '__main__':
             if total_iters % opt.display_freq == 0 or overfit_one_sample:  # display images on visdom and save images to a HTML file
                 save_result = total_iters % opt.update_html_freq == 0
                 model.compute_visuals()
-                visualizer.display_current_results(model.get_current_visuals(), epoch+epoch_iter, save_result, model.get_additional_visuals())
+                visualizer.display_current_results(model.get_current_visuals(),total_iters // opt.batch_size, save_result, model.get_additional_visuals())
 
                 try:
                     if save_result:
-                        final_obj = os.path.join(visualizer.img_dir, 'epoch%.3d_%s.obj' % (epoch+epoch_iter, 'mesh'))
+                        final_obj = os.path.join(visualizer.img_dir, 'epoch%.3d_%s.obj' % (total_iters // opt.batch_size, 'mesh'))
                         save_obj(final_obj, model.estimated_mesh.verts_packed(),
                                  torch.from_numpy(model.flamelayer.faces.astype(np.int32)),
                                  verts_uvs=model.estimated_mesh.textures.verts_uvs_packed(),
