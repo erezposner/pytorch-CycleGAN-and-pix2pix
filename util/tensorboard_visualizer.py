@@ -102,11 +102,11 @@ class TensorBoardVisualizer():
         faces_tensor = torch.tensor(np.int32(flamelayer.faces), dtype=torch.long).cuda().unsqueeze(0)
 
         colors_tensor = torch.zeros(vertices_tensor.shape)
-        # verts_uvs = 1 - estimated_mesh.textures.verts_uvs_packed()
-        # verts_uvs[:, 0] = 1 - verts_uvs[:, 0]
 
-        verts_uvs =  estimated_mesh.textures.verts_uvs_packed()
+        verts_uvs =  estimated_mesh.textures.verts_uvs_packed().clone()
         verts_uvs[:, 1] = 1 - verts_uvs[:, 1] # invert horizontal axis
+
+
 
         verts_uvs_un = (verts_uvs * estimated_texture_map.shape[1] - 1).long()
         vertices_uv_correspondence = flamelayer.extract_vertices_uv_correspondence_for_tb(estimated_mesh, estimated_texture_map)
