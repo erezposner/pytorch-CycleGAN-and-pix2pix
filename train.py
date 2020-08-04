@@ -82,7 +82,7 @@ if __name__ == '__main__':
                 visualizer.display_current_results(model.get_current_visuals(),total_iters // opt.batch_size, save_result, model.get_additional_visuals())
 
                 try:
-                    if save_result:
+                    if save_result or (opt.isTrain and not opt.no_html):
                         final_obj = os.path.join(visualizer.img_dir, 'epoch%.3d_%s.obj' % (total_iters // opt.batch_size, 'mesh'))
                         save_obj(final_obj, model.estimated_mesh.verts_packed(),
                                  torch.from_numpy(model.flamelayer.faces.astype(np.int32)),
