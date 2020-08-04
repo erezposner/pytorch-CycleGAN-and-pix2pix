@@ -81,11 +81,11 @@ class TensorBoardVisualizer():
             # if not self.vis.check_connection():
             #     self.create_visdom_connections()
 
-            # if self.use_html:  # create an HTML object at <checkpoints_dir>/web/; images will be saved under <checkpoints_dir>/web/images/
-            self.web_dir = os.path.join(opt.checkpoints_dir, opt.name, 'web')
-            self.img_dir = os.path.join(self.web_dir, 'images')
-            print('create web directory %s...' % self.web_dir)
-            util.mkdirs([self.web_dir, self.img_dir])
+            if self.use_html:  # create an HTML object at <checkpoints_dir>/web/; images will be saved under <checkpoints_dir>/web/images/
+                self.web_dir = os.path.join(opt.checkpoints_dir, opt.name, 'web')
+                self.img_dir = os.path.join(self.web_dir, 'images')
+                print('create web directory %s...' % self.web_dir)
+                util.mkdirs([self.web_dir, self.img_dir])
         # create a logging file to store training losses
         self.log_name = os.path.join(opt.checkpoints_dir, opt.name, 'loss_log.txt')
         with open(self.log_name, "a") as log_file:
@@ -102,7 +102,12 @@ class TensorBoardVisualizer():
         faces_tensor = torch.tensor(np.int32(flamelayer.faces), dtype=torch.long).cuda().unsqueeze(0)
 
         colors_tensor = torch.zeros(vertices_tensor.shape)
-        verts_uvs = 1 - estimated_mesh.textures.verts_uvs_packed()
+        # verts_uvs = 1 - estimated_mesh.textures.verts_uvs_packed()
+        # verts_uvs[:, 0] = 1 - verts_uvs[:, 0]
+
+        verts_uvs =  estimated_mesh.textures.verts_uvs_packed()
+        verts_uvs[:, 1] = 1 - verts_uvs[:, 1] # invert horizontal axis
+
         verts_uvs_un = (verts_uvs * estimated_texture_map.shape[1] - 1).long()
         vertices_uv_correspondence = flamelayer.extract_vertices_uv_correspondence_for_tb(estimated_mesh, estimated_texture_map)
         for i in range(vertices_uv_correspondence.shape[0]):
@@ -111,6 +116,7 @@ class TensorBoardVisualizer():
                                                                     :].float() * 255
 
         self.writer.add_mesh(tag, vertices=vertices_tensor, colors=colors_tensor, faces=faces_tensor, global_step=epoch)
+
 
 
 
@@ -123,8 +129,9 @@ class TensorBoardVisualizer():
             save_result (bool) - - if save the current results to an HTML file
         """
         try:
-            self.display_estimated_mesh(epoch, additional_visuals['flamelayer'], additional_visuals['estimated_mesh'], additional_visuals['estimated_texture_map'], 'estimated_mesh')
             self.display_estimated_mesh(epoch, additional_visuals['flamelayer'], additional_visuals['true_mesh'], additional_visuals['true_mesh'].textures.maps_padded(), 'true_mesh')
+
+            self.display_estimated_mesh(epoch, additional_visuals['flamelayer'], additional_visuals['estimated_mesh'], additional_visuals['estimated_texture_map'], 'estimated_mesh')
         except:
             pass
 
