@@ -67,13 +67,15 @@ class HybridModel(BaseModel):
         return parser
 
     def get_additional_visuals(self):
-        visual_ret = OrderedDict()
-        visual_ret['vertices'] = self.vertices
-        visual_ret['estimated_mesh'] = self.estimated_mesh
-        visual_ret['estimated_texture_map'] = self.estimated_texture_map
-        visual_ret['flamelayer'] = self.flamelayer
-        visual_ret['true_mesh'] = self.true_mesh
-
+        try:
+            visual_ret = OrderedDict()
+            visual_ret['vertices'] = self.vertices
+            visual_ret['estimated_mesh'] = self.estimated_mesh
+            visual_ret['estimated_texture_map'] = self.estimated_texture_map
+            visual_ret['flamelayer'] = self.flamelayer
+            visual_ret['true_mesh'] = self.true_mesh
+        except:
+            visual_ret = None
         return visual_ret
 
     def __init__(self, opt):
@@ -88,7 +90,8 @@ class HybridModel(BaseModel):
         self.backgrounds_folder = f'resources/backgrounds'
         self.num_of_backgrounds = len(list(Path(self.backgrounds_folder).glob('*')))
         self.flamelayer = FlameDecoder(config)
-        self.flamelayer.cuda()
+        self.flamelayer.to(self.device)
+
         # config.use_3D_translation = True  # could be removed, depending on the camera model
         # config.use_face_contour = False
         self.face_parts_segmentation = FacePartSegmentation(self.device)
@@ -198,6 +201,8 @@ class HybridModel(BaseModel):
         # segmentation_texture_map = cv2.imread(str(Path('resources') / 'part_segmentation_map_2048_gray_n_h.png'))[...,
         segmentation_texture_map = cv2.imread(str(Path('resources') / 'Color_Map_Sag_symmetric.png'))[...,
                                    ::-1].astype(np.uint8)
+        segmentation_texture_map = cv2.resize(segmentation_texture_map, (512, 512), interpolation=cv2.INTER_NEAREST)
+
         # import matplotlib.pyplot as plt
         # plt.imshow(segmentation_texture_map)
         # plt.show()
@@ -219,6 +224,8 @@ class HybridModel(BaseModel):
 
         weights_texture_map = cv2.imread(str(Path('resources') / 'Color_Map_Sag_symmetric_Weights.png'))[...,
                               ::-1].astype(np.uint8)
+        weights_texture_map = cv2.resize(weights_texture_map, (512, 512), interpolation=cv2.INTER_CUBIC)
+
         # import matplotlib.pyplot as plt
         # plt.imshow(weights_texture_map)
         # plt.show()
@@ -403,8 +410,9 @@ class HybridModel(BaseModel):
             transforms.ToPILImage()(silhouette_images.squeeze().permute(0, 1).cpu()).save('out/silhouette.png')
             # transforms.ToPILImage()(images.squeeze().permute(2, 0, 1).cpu()).save('out/img.png')
         cull_backfaces_mask = (1 - (silhouette_images - negative_silhouette_images).abs())
-        img = (images[0][..., :3].detach().cpu().numpy() * 255).astype(np.uint8)
         if self.opt.verbose:
+            img = (images[0][..., :3].detach().cpu().numpy() * 255).astype(np.uint8)
+
             Image.fromarray(img).save('out/test1.png')
         images = Normalize(images)
         silhouette_images = silhouette_images.clamp(0, 1)
@@ -419,8 +427,9 @@ class HybridModel(BaseModel):
 
     def forward(self):
         """Run forward pass; called by both functions <optimize_parameters> and <test>."""
+        inp = torch.cat((self.real_A, self.fake_correspondence_map), 1)
+
         if True:
-            inp = torch.cat((self.real_A, self.fake_correspondence_map), 1)
             # inp = self.real_A
             # from torchsummary import summary
             # summary(self.netG, (6, 256, 256))
@@ -439,7 +448,8 @@ class HybridModel(BaseModel):
                 # self.fake_Texture = fake_Texture_gen + F.grid_sample(self.real_A, uvs_init ,align_corners=True)
                 # self.fake_Texture = F.grid_sample(self.real_A, uvs_init + self.uvs.permute(0, 2, 3, 1) / 10)
             else:
-                self.fake_Texture = self.uvs  # + self.real_A
+                self.uvs, _ = self.netG(inp)  # RefinedTextureMap = G(TextureMap)
+                self.fake_B = self.uvs[..., 2:, :, :]
             # cv2.imwrite('out/t.png',
             #             (255 * UnNormalize(self.fake_Texture.detach()).cpu().squeeze().permute(1, 2, 0).numpy()).astype(np.uint8))
             # endregion
