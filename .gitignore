@@ -41,3 +41,13 @@ test/.coverage
 test/data/legacy_serialized.pt
 *~
 .idea
+out/
+smpl_model/*
+/scripts/load_from_gt.py
+/bareteeth.000001.26_C/
+/vgg_model/
+/models/face_part_seg/data/
+/models/face_part_seg/res/
+resources/vgg19
+docs/.~lock.segmentation_annotation.ods#
+/resources/resnet_18/resnet18-5c106cde.pth
