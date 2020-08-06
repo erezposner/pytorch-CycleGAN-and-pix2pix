@@ -8,7 +8,7 @@ from pytorch3d.renderer import MeshRenderer, MeshRasterizer, PointLights, Textur
 from pytorch3d.renderer.mesh.shader import UVsCorrespondenceShader
 from pytorch3d.structures import Textures
 import numpy as np
-
+from util import batch_transforms
 from util.util import UnNormalize, Normalize
 from .base_model import BaseModel
 from . import networks
@@ -74,6 +74,7 @@ class HybridModel(BaseModel):
             visual_ret['estimated_texture_map'] = self.estimated_texture_map
             visual_ret['flamelayer'] = self.flamelayer
             visual_ret['true_mesh'] = self.true_mesh
+            visual_ret['verbose_batch_ind'] = self.verbose_batch_ind
         except:
             visual_ret = None
         return visual_ret
@@ -126,6 +127,7 @@ class HybridModel(BaseModel):
                                       not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids, image_size=self.opt.crop_size)
         self.netF = networks.define_F(opt.input_nc, opt.output_flame_params, opt.ngf, opt.netG, opt.norm,
                                       not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids)
+        self.verbose_batch_ind = self.opt.batch_size - 1
 
         if self.isTrain:  # define a discriminator; conditional GANs need to take both input and output images; Therefore, #channels for D is input_nc + output_nc
             self.netD = networks.define_D(opt.input_nc * 2 + opt.output_nc, opt.ndf, opt.netD,
@@ -218,7 +220,7 @@ class HybridModel(BaseModel):
                 blend_params=bp,
                 device=self.device,
                 cameras=cameras,
-                colormap=segmentation_texture_map
+                colormap=segmentation_texture_map.repeat(self.opt.batch_size, 1, 1, 1)
             )
         )
 
@@ -241,7 +243,7 @@ class HybridModel(BaseModel):
                 blend_params=bp,
                 device=self.device,
                 cameras=cameras,
-                colormap=weights_texture_map
+                colormap=weights_texture_map.repeat(self.opt.batch_size, 1, 1, 1)
             )
         )
 
@@ -270,6 +272,15 @@ class HybridModel(BaseModel):
         # print('hybrid')
 
         """Calculate additional output images for visdom and HTML visualization"""
+
+        self.real_A = self.real_A[None,self.verbose_batch_ind]
+        self.warped_input_texture_map = self.warped_input_texture_map[None,self.verbose_batch_ind]
+        self.fake_Texture = self.fake_Texture[None,self.verbose_batch_ind]
+        self.yam_rendered_img = self.yam_rendered_img[None,self.verbose_batch_ind]
+        self.fake_B = self.fake_B[None,self.verbose_batch_ind]
+        self.real_B = self.real_B[None,self.verbose_batch_ind]
+        self.loss_3d_face_part_segmentation_de = self.loss_3d_face_part_segmentation_de[None,None,self.verbose_batch_ind]
+
         pass
 
     def set_input(self, input_data):
@@ -297,15 +308,15 @@ class HybridModel(BaseModel):
 
     def create_true_mesh_from_initial_guess(self):
 
-        self.true_vertices = self.flamelayer(shape_params=self.true_flame_params['shape_params'][0], expression_params=self.true_flame_params['expression_params'][0],
-                                             pose_params=torch.cat([self.true_flame_params['global_rot'][0], self.true_flame_params['jaw_pose'][0]], dim=1),
-                                             neck_pose=self.true_flame_params['neck_pose_params'][0],
-                                             transl=self.true_flame_params['transl'][0],
-                                             eye_pose=torch.zeros((1, self.eyball_pose_size)).cuda())
+        self.true_vertices = self.flamelayer(shape_params=self.true_flame_params['shape_params'].squeeze(1), expression_params=self.true_flame_params['expression_params'].squeeze(1),
+                                             pose_params=torch.cat([self.true_flame_params['global_rot'].squeeze(1), self.true_flame_params['jaw_pose'].squeeze(1)], dim=1),
+                                             neck_pose=self.true_flame_params['neck_pose_params'].squeeze(1),
+                                             transl=self.true_flame_params['transl'].squeeze(1),
+                                             eye_pose=torch.zeros((self.opt.batch_size, self.eyball_pose_size)).cuda())
         texture_map = UnNormalize(self.real_A).permute(0, 2, 3, 1)
         texture = Textures(texture_map, faces_uvs=self.faces_uvs1, verts_uvs=self.verts_uvs1)
         #
-        self.true_mesh = make_mesh(self.true_vertices.squeeze(), self.flamelayer.faces, False, texture)
+        self.true_mesh = make_mesh(self.true_vertices, self.flamelayer.faces, False, texture)
         # final_obj = os.path.join('out/', 'final_model.obj')
         #
         # save_obj(final_obj, self.true_mesh.verts_packed(), torch.from_numpy(self.flamelayer.faces.astype(np.int32)),
@@ -319,15 +330,15 @@ class HybridModel(BaseModel):
 
         if base_flame_params is None:
             base_flame_params = defaultDict()
-            base_flame_params['shape_params'] = torch.zeros((1, 1, self.shape_params_size)).cuda()
-            base_flame_params['expression_params'] = torch.zeros((1, 1, self.expression_params_size)).cuda()
-            base_flame_params['neck_pose_params'] = torch.zeros((1, 1, self.neck_pose_params_size)).cuda()
-            base_flame_params['jaw_pose'] = torch.zeros((1, 1, self.jaw_pose_size)).cuda()
-            base_flame_params['global_rot'] = torch.zeros((1, 1, self.global_rot_size)).cuda()
-            base_flame_params['transl'] = torch.zeros((1, 1, self.transl_size)).cuda()
+            base_flame_params['shape_params'] = torch.zeros((self.opt.batch_size, 1, self.shape_params_size)).cuda()
+            base_flame_params['expression_params'] = torch.zeros((self.opt.batch_size, 1, self.expression_params_size)).cuda()
+            base_flame_params['neck_pose_params'] = torch.zeros((self.opt.batch_size, 1, self.neck_pose_params_size)).cuda()
+            base_flame_params['jaw_pose'] = torch.zeros((self.opt.batch_size, 1, self.jaw_pose_size)).cuda()
+            base_flame_params['global_rot'] = torch.zeros((self.opt.batch_size, 1, self.global_rot_size)).cuda()
+            base_flame_params['transl'] = torch.zeros((self.opt.batch_size, 1, self.transl_size)).cuda()
 
         if use_fix_params:
-            flame_param = torch.zeros((1, 118)).cuda()
+            flame_param = torch.zeros((self.opt.batch_size, 1, 118)).cuda()
             self.shape_params = base_flame_params['shape_params']
         else:
             # self.shape_params = self.netGlobal_shape.module.global_shape + base_flame_params['shape_params']
@@ -342,36 +353,41 @@ class HybridModel(BaseModel):
         # ind += self.shape_params_size
         # if use_fix_params:
         # flame_param[:, ind:ind + expression_params_size] = data['expression_params']
-        self.expression_params = flame_param[:, ind:ind + self.expression_params_size] + \
-                                 base_flame_params['expression_params'][0]
+        self.expression_params = flame_param[..., ind:ind + self.expression_params_size] + \
+                                 base_flame_params['expression_params']
         # self.expression_params =  base_flame_params['expression_params'][0]
         ind += self.expression_params_size
         # if use_fix_params:
         # flame_param[:, ind:ind + neck_pose_params_size] = data['neck_pose_params']
-        self.neck_pose = flame_param[:, ind:ind + self.neck_pose_params_size] + base_flame_params['neck_pose_params'][0]
+        self.neck_pose = flame_param[..., ind:ind + self.neck_pose_params_size] + base_flame_params['neck_pose_params']
         ind += self.neck_pose_params_size
         # if use_fix_params:
         #     flame_param[:, ind:ind + jaw_pose_size] = data['jaw_pose']
-        self.jaw_pose = flame_param[:, ind:ind + self.jaw_pose_size] + base_flame_params['jaw_pose'][0]
+        self.jaw_pose = flame_param[..., ind:ind + self.jaw_pose_size] + base_flame_params['jaw_pose'][0]
         # self.jaw_pose =  base_flame_params['jaw_pose'][0]
         ind += self.jaw_pose_size
         # if use_fix_params:
         #     flame_param[:, ind:ind + global_rot_size] = data['global_rot']
-        global_rot = flame_param[:, ind:ind + self.global_rot_size] * scale + base_flame_params['global_rot'][0]
+        global_rot = flame_param[..., ind:ind + self.global_rot_size] * scale + base_flame_params['global_rot']
 
         ind += self.global_rot_size
 
-        self.pose_params = torch.cat([global_rot, self.jaw_pose], dim=1)
+        self.pose_params = torch.cat([global_rot, self.jaw_pose], dim=-1)
         # if use_fix_params:
         #     flame_param[:, ind:ind + transl_size] = data['transl']
-        self.transl = flame_param[:, ind:ind + self.transl_size] * scale + base_flame_params['transl'][0]
+        self.transl = flame_param[..., ind:ind + self.transl_size] * scale + base_flame_params['transl']
 
         ind += self.transl_size
-        self.eyball_pose = flame_param[:, ind:ind + self.eyball_pose_size]
+        self.eyball_pose = flame_param[..., ind:ind + self.eyball_pose_size]
         ind += self.eyball_pose_size
-        vertices = self.flamelayer(shape_params=self.shape_params[0], expression_params=self.expression_params,
-                                   pose_params=self.pose_params, neck_pose=self.neck_pose, transl=self.transl,
-                                   eye_pose=self.eyball_pose)
+        vertices = self.flamelayer(shape_params=self.shape_params.squeeze(1), expression_params=self.expression_params.squeeze(1),
+                                   pose_params=self.pose_params.squeeze(1), neck_pose=self.neck_pose.squeeze(1), transl=self.transl.squeeze(1),
+                                   eye_pose=self.eyball_pose.squeeze(1))
+        # vertices = self.flamelayer(shape_params=self.true_flame_params['shape_params'].squeeze(1), expression_params=self.true_flame_params['expression_params'].squeeze(1),
+        #                                      pose_params=torch.cat([self.true_flame_params['global_rot'].squeeze(1), self.true_flame_params['jaw_pose'].squeeze(1)], dim=1),
+        #                                      neck_pose=self.true_flame_params['neck_pose_params'].squeeze(1),
+        #                                      transl=self.true_flame_params['transl'].squeeze(1),
+        #                                      eye_pose=torch.zeros((self.opt.batch_size, self.eyball_pose_size)).cuda())
         return vertices
 
     def project_to_image_plane(self, vertices, texture_map, use_constant_data):
@@ -393,9 +409,13 @@ class HybridModel(BaseModel):
         # final_obj = f'{self.save_dir}/web/images/{self.opt.epoch_count:03d}_fake_mesh.obj'
         # save_obj(final_obj, vertices[0], torch.from_numpy(self.flamelayer.faces.astype(np.int32)))
         self.estimated_texture_map = texture_map.permute(0, 2, 3, 1)
-        texture = Textures(self.estimated_texture_map, faces_uvs=self.faces_uvs1, verts_uvs=self.verts_uvs1)
+        texture = Textures(self.estimated_texture_map, faces_uvs=self.faces_uvs1.repeat(self.opt.batch_size, 1, 1), verts_uvs=self.verts_uvs1.repeat(self.opt.batch_size, 1, 1))
+
         self.vertices = vertices
-        self.estimated_mesh = make_mesh(vertices.squeeze(), self.flamelayer.faces, False, texture)
+        self.estimated_mesh = make_mesh(vertices, self.flamelayer.faces, False, texture)  # TODO
+        # import os
+
+        # from pytorch3d.io import load_objs_as_meshes, save_obj
         # final_obj = os.path.join('out/', 'final_model.obj')
 
         # save_obj(final_obj, self.estimated_mesh.verts_packed(), torch.from_numpy(self.flamelayer.faces.astype(np.int32)),
@@ -403,26 +423,23 @@ class HybridModel(BaseModel):
         #          faces_uvs=self.estimated_mesh.textures.faces_uvs_packed())
 
         images = self.renderer(self.estimated_mesh, materials=self.materials)
-        silhouette_images = self.silhouette_renderer(self.estimated_mesh, materials=self.materials)[..., 3].unsqueeze(0)
-        negative_silhouette_images = self.negative_silhouette_renderer(self.estimated_mesh, materials=self.materials)[
-            ..., 3].unsqueeze(0)
+        silhouette_images = self.silhouette_renderer(self.estimated_mesh, materials=self.materials)[..., 3, None]
+        negative_silhouette_images = self.negative_silhouette_renderer(self.estimated_mesh, materials=self.materials)[..., 3, None]
         if self.opt.verbose:
-            transforms.ToPILImage()(silhouette_images.squeeze().permute(0, 1).cpu()).save('out/silhouette.png')
+            transforms.ToPILImage()(silhouette_images[self.verbose_batch_ind].squeeze().permute(0, 1).cpu()).save('out/silhouette.png')
             # transforms.ToPILImage()(images.squeeze().permute(2, 0, 1).cpu()).save('out/img.png')
         cull_backfaces_mask = (1 - (silhouette_images - negative_silhouette_images).abs())
         if self.opt.verbose:
-            img = (images[0][..., :3].detach().cpu().numpy() * 255).astype(np.uint8)
+            img = (images[self.verbose_batch_ind][..., :3].detach().cpu().numpy() * 255).astype(np.uint8)
 
             Image.fromarray(img).save('out/test1.png')
         images = Normalize(images)
         silhouette_images = silhouette_images.clamp(0, 1)
-        segmented_3d_model_image = self.segmentation_3d_renderer(self.estimated_mesh)[0, ..., 0].unsqueeze(0).unsqueeze(0).repeat(1, 3, 1, 1)
-        weights_3d_renderer_image = self.weights_3d_renderer(self.estimated_mesh)[0, ..., 0].unsqueeze(0).unsqueeze(0).repeat(1, 3, 1, 1)
+        segmented_3d_model_image = self.segmentation_3d_renderer(self.estimated_mesh)[..., 0, None].permute(0, 3, 1, 2).repeat(1, 3, 1, 1)
+
+        weights_3d_renderer_image = self.weights_3d_renderer(self.estimated_mesh)[..., 0, None].permute(0, 3, 1, 2).repeat(1, 3, 1, 1)
         # cv2.imwrite('out/s.png', segmented_3d_model_image.squeeze().permute(1, 2, 0).cpu().detach().numpy())
-        # Image.fromarray(
-        #     ((255 * segmented_3d_model_image[0, ..., :3]).squeeze().detach().cpu().numpy().astype(np.uint8))).save(
-        #     str('out/segmentatino_texture.png')
-        # )
+
         return images[..., :3].permute(0, 3, 1, 2), silhouette_images, cull_backfaces_mask, segmented_3d_model_image, weights_3d_renderer_image  # [..., :3].permute(0, 3, 1, 2)
 
     def forward(self):
@@ -468,7 +485,7 @@ class HybridModel(BaseModel):
                         self.fake_flame = data
 
             zero_out_estimated_geomtery = False
-            self.fake_geo_from_flame = self.create_geo_from_flame_params(self.fake_flame / 1000, base_flame_params=self.true_flame_params, use_fix_params=zero_out_estimated_geomtery)
+            self.fake_geo_from_flame = self.create_geo_from_flame_params(self.fake_flame.permute(1, 0, 2) / 1000, base_flame_params=self.true_flame_params, use_fix_params=zero_out_estimated_geomtery)
 
             self.fake_B, self.fake_B_silhouette, self.cull_backfaces_mask, self.segmented_3d_model_image, self.weights_3d_model_image = self.project_to_image_plane(self.fake_geo_from_flame,
                                                                                                                                                                     UnNormalize(self.fake_Texture),
@@ -539,16 +556,16 @@ class HybridModel(BaseModel):
 
         self.loss_F_Reg = self.flame_regularizer_loss(self.fake_geo_from_flame) * self.opt.lambda_flame_regularizer
         # silhouette loss
-        self.loss_silhouette_de = self.rect_mask.squeeze()[0] * self.criterionBCE(
-            self.rect_mask.squeeze()[0] * self.fake_B_silhouette.squeeze(),
-            self.rect_mask.squeeze()[0] * self.true_mask.squeeze())
+        self.loss_silhouette_de = self.rect_mask * self.criterionBCE(
+            self.rect_mask * self.fake_B_silhouette.permute(0, 3, 1, 2),
+            self.rect_mask * self.true_mask)
 
         eta = 0.01
         self.loss_silhouette = self.loss_silhouette_de.sum() * self.opt.lambda_silhouette
         self.segmented_3d_one_hot_model_image = torch.nn.functional.one_hot(
             (self.segmented_3d_model_image[:, 0, :, :]).long()).float().permute(0, 3, 1, 2)
 
-        segmented_ears_mask = self.segmented_3d_one_hot_model_image[:, self.segmentation_parts_dict['l_ear'], :, :].clone()
+        segmented_ears_mask = self.segmented_3d_one_hot_model_image[:, None, self.segmentation_parts_dict['l_ear'], :, :].clone()
 
         self.segmented_3d_one_hot_model_image[self.segmented_3d_one_hot_model_image == 0] = self.segmented_3d_one_hot_model_image[self.segmented_3d_one_hot_model_image == 0] + eta
         # self.weights_3d_model_image = self.weights_3d_model_image[:, 0, :, :]
@@ -557,7 +574,7 @@ class HybridModel(BaseModel):
         self.loss_3d_face_part_segmentation = self.loss_3d_face_part_segmentation  # * self.weights_3d_model_image[:,0,:,:]
 
         # Todo This code below is for removing l1 loss where differences with segmentation - not tested!
-        self.loss_3d_face_part_segmentation_de = self.loss_3d_face_part_segmentation.clamp(0, 255).unsqueeze(0)
+        self.loss_3d_face_part_segmentation_de = self.loss_3d_face_part_segmentation.clamp(0, 255)
         # self.loss_3d_face_part_segmentation_de = 1 - self.loss_3d_face_part_segmentation_de / self.loss_3d_face_part_segmentation_de.max()
         # self.loss_3d_face_part_segmentation_de = 255- self.loss_3d_face_part_segmentation_de
         # self.loss_3d_face_part_segmentation = self.CrossEntropyCriterion2(self.segmented_3d_model_image[:, 0, :, :],
@@ -565,25 +582,27 @@ class HybridModel(BaseModel):
         # self.loss_3d_face_part_segmentation_de = self.loss_3d_face_part_segmentation.clamp(0,255).unsqueeze(0) / 255
         # transforms.ToPILImage()(self.loss_3d_face_part_segmentation_de.cpu().squeeze()).save('out/loss_3d_face_part_segmentation.png')
         if self.opt.verbose:
-            transforms.ToPILImage()(self.loss_3d_face_part_segmentation_de.cpu().squeeze()).save('out/loss_3d_face_part_segmentation.png')
-            transforms.ToPILImage()(self.weights_3d_model_image.cpu().squeeze()).save('out/weights_3d_model_image.png')
+            transforms.ToPILImage()(self.loss_3d_face_part_segmentation_de[self.verbose_batch_ind].cpu().squeeze()).save('out/loss_3d_face_part_segmentation.png')
+            transforms.ToPILImage()(self.weights_3d_model_image[self.verbose_batch_ind].cpu().squeeze()).save('out/weights_3d_model_image.png')
 
         self.loss_3d_face_part_segmentation = self.loss_3d_face_part_segmentation.sum() * self.opt.lambda_face_seg  # * self.opt.lambda_face_seg
         self.loss_G_L1_reducted = self.criterionL1(self.fake_B,
                                                    self.real_B) * self.rect_mask  # * (1 - self.weights_3d_model_image)  # * self.loss_3d_face_part_segmentation_de  # * self.l1_weight_mask # * self.cull_backfaces_mask
 
         ## region compute ear variance
-        segmented_ears_colored_variance = (segmented_ears_mask * UnNormalize(self.fake_B))
+        segmented_ears_colored_variance = segmented_ears_mask.expand_as(self.fake_B) * UnNormalize(self.fake_B)
 
-        r_segmented_ears_colored_variance = segmented_ears_colored_variance[:, 0, :, :]
-        g_segmented_ears_colored_variance = segmented_ears_colored_variance[:, 1, :, :]
-        b_segmented_ears_colored_variance = segmented_ears_colored_variance[:, 2, :, :]
+        r_segmented_ears_colored_variance = segmented_ears_colored_variance[:, None, 0, :, :]
+        g_segmented_ears_colored_variance = segmented_ears_colored_variance[:, None, 1, :, :]
+        b_segmented_ears_colored_variance = segmented_ears_colored_variance[:, None, 2, :, :]
 
-        r_segmented_ears_colored_variance = r_segmented_ears_colored_variance[r_segmented_ears_colored_variance > 0].var()
-        g_segmented_ears_colored_variance = g_segmented_ears_colored_variance[g_segmented_ears_colored_variance > 0].var()
-        b_segmented_ears_colored_variance = b_segmented_ears_colored_variance[b_segmented_ears_colored_variance > 0].var()
+        color_var = 0
+        for i in range(self.opt.batch_size):
+            color_var = color_var + r_segmented_ears_colored_variance[i][r_segmented_ears_colored_variance[i] > 0].var(dim=-1)
+            color_var = color_var + g_segmented_ears_colored_variance[i][g_segmented_ears_colored_variance[i] > 0].var(dim=-1)
+            color_var = color_var + b_segmented_ears_colored_variance[i][b_segmented_ears_colored_variance[i] > 0].var(dim=-1)
 
-        self.loss_segmented_ears_colored_variance = (r_segmented_ears_colored_variance + g_segmented_ears_colored_variance + b_segmented_ears_colored_variance) * 100
+        self.loss_segmented_ears_colored_variance = color_var * 100
         # endregion
         self.loss_G_L1 = self.loss_G_L1_reducted.abs().sum() * self.opt.lambda_L1
         # self.loss_2d_face_part_segmentation = self.CrossEntropyCriterion(self.fake_B_seg,
@@ -597,13 +616,13 @@ class HybridModel(BaseModel):
         # + self.loss_silhouette
 
         if self.opt.verbose:
-            transforms.ToPILImage()(self.loss_G_L1_reducted.detach().cpu().squeeze() / 10).save('out/L1_reducted.png')
-            transforms.ToPILImage()(255 * self.loss_silhouette_de.cpu()).save('out/loss_silhouette.png')
-            transforms.ToPILImage()(self.segmented_3d_model_image.cpu().squeeze() / 255).save('out/fake_B_seg_cat.png')
-            transforms.ToPILImage()(self.real_B_seg.cpu().squeeze() / 255).save('out/real_B_seg_cat.png')
-            transforms.ToPILImage()(UnNormalize(self.real_B).cpu().squeeze()).save('out/real_B.png')
-            transforms.ToPILImage()(UnNormalize(self.fake_B).cpu().squeeze()).save('out/fake_B.png')
-            transforms.ToPILImage()(segmented_ears_colored_variance.squeeze().detach().cpu()).save('out/segmented_ear_mask.png')
+            transforms.ToPILImage()(self.loss_G_L1_reducted[self.verbose_batch_ind].detach().cpu().squeeze() / 10).save('out/L1_reducted.png')
+            transforms.ToPILImage()(255 * self.loss_silhouette_de[self.verbose_batch_ind].cpu()).save('out/loss_silhouette.png')
+            transforms.ToPILImage()(self.segmented_3d_model_image[self.verbose_batch_ind].cpu().squeeze() / 255).save('out/fake_B_seg_cat.png')
+            transforms.ToPILImage()(self.real_B_seg[self.verbose_batch_ind].cpu().squeeze() / 255).save('out/real_B_seg_cat.png')
+            transforms.ToPILImage()(UnNormalize(self.real_B[self.verbose_batch_ind]).cpu().squeeze()).save('out/real_B.png')
+            transforms.ToPILImage()(UnNormalize(self.fake_B[self.verbose_batch_ind]).cpu().squeeze()).save('out/fake_B.png')
+            transforms.ToPILImage()(segmented_ears_colored_variance[self.verbose_batch_ind].squeeze().detach().cpu()).save('out/segmented_ear_mask.png')
 
         self.loss_G.backward()
 
@@ -624,18 +643,17 @@ class HybridModel(BaseModel):
                                         'hair': 17,
                                         'hat': 18,
                                         }
-        real_un = UnNormalize(input_img).squeeze()
-        tt = transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
-        real_un = F.interpolate(real_un.unsqueeze(0), (512, 512))
-        img = tt(real_un.squeeze()).unsqueeze(0)
+        real_un = UnNormalize(input_img)
+        tt = batch_transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225), device=self.device)
+        real_un = F.interpolate(real_un, (512, 512))
+        img = tt(real_un)
 
         # with torch.no_grad():
         out = self.face_parts_segmentation(img)
-        parsing = out.squeeze(0).detach().cpu().numpy().argmax(0)
-        # print(parsing)
 
         if self.opt.verbose:
-            image = transforms.ToPILImage()(UnNormalize(input_img).squeeze().detach().cpu()).resize((512, 512), Image.BILINEAR)
+            parsing = out[self.verbose_batch_ind].detach().cpu().numpy().argmax(0)
+            image = transforms.ToPILImage()(UnNormalize(input_img[self.verbose_batch_ind]).squeeze().detach().cpu()).resize((512, 512), Image.BILINEAR)
             self.face_parts_segmentation.vis_parsing_maps(image, parsing, stride=1, save_im=True, save_path=f'out/{fname}.png')
         out = F.interpolate(out, (self.opt.crop_size, self.opt.crop_size))
         argmax_tensor = torch.argmax(out, dim=1)
@@ -650,20 +668,20 @@ class HybridModel(BaseModel):
     def mask_outputs(self):
         self.rect_mask = torch.zeros(self.fake_B.shape).cuda()
 
-        self.l1_weight_mask = np.zeros((self.fake_B.shape[0], 1, self.fake_B.shape[2], self.fake_B.shape[3]))
+        # self.l1_weight_mask = np.zeros((self.fake_B.shape[0], 1, self.fake_B.shape[2], self.fake_B.shape[3]))
         self.rect_mask[..., 0:195, 40:200] = 1
-        h_c = 195 // 2
-        w_c = 40 + (200 - 40) // 2
+        # h_c = 195 // 2
+        # w_c = 40 + (200 - 40) // 2
 
         # w_c = 128
         # h_c = 128
-        x = np.linspace(0, self.l1_weight_mask.shape[2], self.l1_weight_mask.shape[2])
-        y = np.linspace(0, self.l1_weight_mask.shape[3], self.l1_weight_mask.shape[3])
+        # x = np.linspace(0, self.l1_weight_mask.shape[2], self.l1_weight_mask.shape[2])
+        # y = np.linspace(0, self.l1_weight_mask.shape[3], self.l1_weight_mask.shape[3])
 
-        xv, yv = np.meshgrid(x - w_c, y - h_c)
-        self.l1_weight_mask = 5 * np.sqrt(xv ** 2 + yv ** 2) / np.sqrt((w_c ** 2 + h_c ** 2))
+        # xv, yv = np.meshgrid(x - w_c, y - h_c)
+        # self.l1_weight_mask = 5 * np.sqrt(xv ** 2 + yv ** 2) / np.sqrt((w_c ** 2 + h_c ** 2))
         # cv2.imwrite('out/d.png', (self.l1_weight_mask  * 25).astype(np.uint8))
-        self.l1_weight_mask = torch.from_numpy(self.l1_weight_mask).repeat(1, 3, 1, 1).cuda().float()
+        # self.l1_weight_mask = torch.from_numpy(self.l1_weight_mask).repeat(1, 3, 1, 1).cuda().float()
 
         _, self.real_B_seg = self.perform_face_part_segmentation(self.real_B, fname='real_B_seg')
         self.real_B_seg[self.real_B_seg == 11] = 0  # mask mouth
@@ -676,7 +694,7 @@ class HybridModel(BaseModel):
         # self.fake_B = Normalize(UnNormalize(self.fake_B) * self.rect_mask)
         # self.real_B = Normalize(UnNormalize(self.real_B) * self.rect_mask)
 
-        self.segmented_3d_model_image = self.segmented_3d_model_image * self.rect_mask[:, 0, ...]
+        self.segmented_3d_model_image = self.segmented_3d_model_image * self.rect_mask
         self.segmented_3d_model_image[self.segmented_3d_model_image.round() == self.segmentation_parts_dict['cloth']] = 0  # mash cloth 16
         self.segmented_3d_model_image[self.segmented_3d_model_image.round() == self.segmentation_parts_dict['neck']] = 0  # mask neck 14
 
@@ -686,9 +704,9 @@ class HybridModel(BaseModel):
         self.fake_B = Normalize(UnNormalize(self.fake_B) * self.rect_mask)
         self.real_B = Normalize(UnNormalize(self.real_B) * self.rect_mask)
         self.real_B_seg = self.real_B_seg * self.rect_mask[:, 0, ...]
-        self.fake_B_seg = self.fake_B_seg * self.rect_mask[:, 0, ...]
-        self.fake_B[self.segmented_3d_model_image.sum(dim=1).repeat(1, 3, 1, 1) == 0] = mask_seg_val
-        self.real_B[self.real_B_seg.repeat(1, 3, 1, 1) == 0] = mask_seg_val
+        self.fake_B_seg = self.fake_B_seg * self.rect_mask[:, None, 0, ...]
+        self.fake_B[(self.segmented_3d_model_image.sum(dim=1) == 0).unsqueeze(1).repeat(1, 3, 1, 1)] = mask_seg_val
+        self.real_B[self.real_B_seg.unsqueeze(1).repeat(1, 3, 1, 1) == 0] = mask_seg_val
         # with torch.no_grad(): #add background image to images
         background_ind = np.random.randint(0, self.num_of_backgrounds)
         try:
