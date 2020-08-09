@@ -127,7 +127,7 @@ class HybridModel(BaseModel):
                                       not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids, image_size=self.opt.crop_size)
         self.netF = networks.define_F(opt.input_nc, opt.output_flame_params, opt.ngf, opt.netG, opt.norm,
                                       not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids)
-        self.verbose_batch_ind = self.opt.batch_size - 1
+        self.verbose_batch_ind = 0
 
         if self.isTrain:  # define a discriminator; conditional GANs need to take both input and output images; Therefore, #channels for D is input_nc + output_nc
             self.netD = networks.define_D(opt.input_nc * 2 + opt.output_nc, opt.ndf, opt.netD,
@@ -209,7 +209,7 @@ class HybridModel(BaseModel):
         # plt.imshow(segmentation_texture_map)
         # plt.show()
 
-        segmentation_texture_map = (torch.from_numpy(np.array(segmentation_texture_map))).unsqueeze(0).float()
+        self.segmentation_texture_map = (torch.from_numpy(np.array(segmentation_texture_map))).unsqueeze(0).float()
         self.segmentation_3d_renderer = MeshRenderer(
             rasterizer=MeshRasterizer(
                 cameras=cameras,
@@ -220,7 +220,7 @@ class HybridModel(BaseModel):
                 blend_params=bp,
                 device=self.device,
                 cameras=cameras,
-                colormap=segmentation_texture_map.repeat(self.opt.batch_size, 1, 1, 1)
+                colormap=self.segmentation_texture_map.repeat(self.opt.batch_size, 1, 1, 1)
             )
         )
 
@@ -232,7 +232,7 @@ class HybridModel(BaseModel):
         # plt.imshow(weights_texture_map)
         # plt.show()
 
-        weights_texture_map = (torch.from_numpy(np.array(weights_texture_map))).unsqueeze(0).float() / 255
+        self.weights_texture_map = (torch.from_numpy(np.array(weights_texture_map))).unsqueeze(0).float() / 255
         self.weights_3d_renderer = MeshRenderer(
             rasterizer=MeshRasterizer(
                 cameras=cameras,
@@ -243,7 +243,7 @@ class HybridModel(BaseModel):
                 blend_params=bp,
                 device=self.device,
                 cameras=cameras,
-                colormap=weights_texture_map.repeat(self.opt.batch_size, 1, 1, 1)
+                colormap=self.weights_texture_map.repeat(self.opt.batch_size, 1, 1, 1)
             )
         )
 
@@ -304,6 +304,8 @@ class HybridModel(BaseModel):
         self.fake_correspondence_map = input_data['correspondence_map_im'].to(self.device)
         self.true_mask = self.true_mask.clamp(0, 1)
         self.image_paths = input_data['A_paths' if AtoB else 'B_paths']
+        self.current_batch_size = self.true_flame_params['shape_params'].shape[0]
+
         self.create_true_mesh_from_initial_guess()
 
     def create_true_mesh_from_initial_guess(self):
@@ -312,9 +314,9 @@ class HybridModel(BaseModel):
                                              pose_params=torch.cat([self.true_flame_params['global_rot'].squeeze(1), self.true_flame_params['jaw_pose'].squeeze(1)], dim=1),
                                              neck_pose=self.true_flame_params['neck_pose_params'].squeeze(1),
                                              transl=self.true_flame_params['transl'].squeeze(1),
-                                             eye_pose=torch.zeros((self.opt.batch_size, self.eyball_pose_size)).cuda())
+                                             eye_pose=torch.zeros((self.current_batch_size, self.eyball_pose_size)).cuda())
         texture_map = UnNormalize(self.real_A).permute(0, 2, 3, 1)
-        texture = Textures(texture_map, faces_uvs=self.faces_uvs1.repeat(self.opt.batch_size, 1, 1), verts_uvs=self.verts_uvs1.repeat(self.opt.batch_size, 1, 1))
+        texture = Textures(texture_map, faces_uvs=self.faces_uvs1.repeat(self.current_batch_size, 1, 1), verts_uvs=self.verts_uvs1.repeat(self.current_batch_size, 1, 1))
 
 
 
@@ -333,15 +335,15 @@ class HybridModel(BaseModel):
 
         if base_flame_params is None:
             base_flame_params = defaultDict()
-            base_flame_params['shape_params'] = torch.zeros((self.opt.batch_size, 1, self.shape_params_size)).cuda()
-            base_flame_params['expression_params'] = torch.zeros((self.opt.batch_size, 1, self.expression_params_size)).cuda()
-            base_flame_params['neck_pose_params'] = torch.zeros((self.opt.batch_size, 1, self.neck_pose_params_size)).cuda()
-            base_flame_params['jaw_pose'] = torch.zeros((self.opt.batch_size, 1, self.jaw_pose_size)).cuda()
-            base_flame_params['global_rot'] = torch.zeros((self.opt.batch_size, 1, self.global_rot_size)).cuda()
-            base_flame_params['transl'] = torch.zeros((self.opt.batch_size, 1, self.transl_size)).cuda()
+            base_flame_params['shape_params'] = torch.zeros((self.current_batch_size, 1, self.shape_params_size)).cuda()
+            base_flame_params['expression_params'] = torch.zeros((self.current_batch_size, 1, self.expression_params_size)).cuda()
+            base_flame_params['neck_pose_params'] = torch.zeros((self.current_batch_size, 1, self.neck_pose_params_size)).cuda()
+            base_flame_params['jaw_pose'] = torch.zeros((self.current_batch_size, 1, self.jaw_pose_size)).cuda()
+            base_flame_params['global_rot'] = torch.zeros((self.current_batch_size, 1, self.global_rot_size)).cuda()
+            base_flame_params['transl'] = torch.zeros((self.current_batch_size, 1, self.transl_size)).cuda()
 
         if use_fix_params:
-            flame_param = torch.zeros((self.opt.batch_size, 1, 118)).cuda()
+            flame_param = torch.zeros((self.current_batch_size, 1, 118)).cuda()
             self.shape_params = base_flame_params['shape_params']
         else:
             # self.shape_params = self.netGlobal_shape.module.global_shape + base_flame_params['shape_params']
@@ -390,7 +392,7 @@ class HybridModel(BaseModel):
         #                                      pose_params=torch.cat([self.true_flame_params['global_rot'].squeeze(1), self.true_flame_params['jaw_pose'].squeeze(1)], dim=1),
         #                                      neck_pose=self.true_flame_params['neck_pose_params'].squeeze(1),
         #                                      transl=self.true_flame_params['transl'].squeeze(1),
-        #                                      eye_pose=torch.zeros((self.opt.batch_size, self.eyball_pose_size)).cuda())
+        #                                      eye_pose=torch.zeros((self.current_batch_size, self.eyball_pose_size)).cuda())
         return vertices
 
     def project_to_image_plane(self, vertices, texture_map, use_constant_data):
@@ -412,7 +414,7 @@ class HybridModel(BaseModel):
         # final_obj = f'{self.save_dir}/web/images/{self.opt.epoch_count:03d}_fake_mesh.obj'
         # save_obj(final_obj, vertices[0], torch.from_numpy(self.flamelayer.faces.astype(np.int32)))
         self.estimated_texture_map = texture_map.permute(0, 2, 3, 1)
-        texture = Textures(self.estimated_texture_map, faces_uvs=self.faces_uvs1.repeat(self.opt.batch_size, 1, 1), verts_uvs=self.verts_uvs1.repeat(self.opt.batch_size, 1, 1))
+        texture = Textures(self.estimated_texture_map, faces_uvs=self.faces_uvs1.repeat(self.current_batch_size, 1, 1), verts_uvs=self.verts_uvs1.repeat(self.current_batch_size, 1, 1))
 
         self.vertices = vertices
         self.estimated_mesh = make_mesh(vertices, self.flamelayer.faces, False, texture)  # TODO
@@ -438,6 +440,11 @@ class HybridModel(BaseModel):
             Image.fromarray(img).save('out/test1.png')
         images = Normalize(images)
         silhouette_images = silhouette_images.clamp(0, 1)
+
+        # if batch size is changing as total number of samples won't divide by batch size precisely we need to update the renderer segmentation map size
+        self.segmentation_3d_renderer.shader.colormap = self.segmentation_texture_map.repeat(self.current_batch_size, 1, 1, 1)
+        self.weights_3d_renderer.shader.colormap = self.weights_texture_map.repeat(self.current_batch_size, 1, 1, 1)
+
         segmented_3d_model_image = self.segmentation_3d_renderer(self.estimated_mesh)[..., 0, None].permute(0, 3, 1, 2).repeat(1, 3, 1, 1)
 
         weights_3d_renderer_image = self.weights_3d_renderer(self.estimated_mesh)[..., 0, None].permute(0, 3, 1, 2).repeat(1, 3, 1, 1)
@@ -600,7 +607,7 @@ class HybridModel(BaseModel):
         b_segmented_ears_colored_variance = segmented_ears_colored_variance[:, None, 2, :, :]
 
         color_var = 0
-        for i in range(self.opt.batch_size):
+        for i in range(self.current_batch_size):
             color_var = color_var + r_segmented_ears_colored_variance[i][r_segmented_ears_colored_variance[i] > 0].var(dim=-1)
             color_var = color_var + g_segmented_ears_colored_variance[i][g_segmented_ears_colored_variance[i] > 0].var(dim=-1)
             color_var = color_var + b_segmented_ears_colored_variance[i][b_segmented_ears_colored_variance[i] > 0].var(dim=-1)
