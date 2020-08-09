@@ -15,8 +15,17 @@ def make_mesh(verts: torch.tensor, faces: np.ndarray, detach:bool, textures = No
 
     faces = torch.tensor(np.int32(faces), dtype=torch.long).cuda()
 
+    # return Meshes(
+    #     verts=[verts.to(device)],
+    #     faces=[faces.to(device)],
+    #     textures=textures
+    # )
+
     return Meshes(
-        verts=[verts.to(device)],
-        faces=[faces.to(device)],
-        textures=textures
+        verts=verts.to(device),
+        faces=faces.to(device).repeat(verts.shape[0],1,1),
+        textures=textures.to(device)
     )
+
+
+

@@ -129,9 +129,15 @@ class TensorBoardVisualizer():
             save_result (bool) - - if save the current results to an HTML file
         """
         try:
-            self.display_estimated_mesh(epoch, additional_visuals['flamelayer'], additional_visuals['true_mesh'], additional_visuals['true_mesh'].textures.maps_padded(), 'true_mesh')
 
-            self.display_estimated_mesh(epoch, additional_visuals['flamelayer'], additional_visuals['estimated_mesh'], additional_visuals['estimated_texture_map'], 'estimated_mesh')
+
+
+            self.display_estimated_mesh(epoch, additional_visuals['flamelayer'], additional_visuals['true_mesh'][additional_visuals['verbose_batch_ind']],
+                                        additional_visuals['true_mesh'].textures.maps_padded()[additional_visuals['verbose_batch_ind'], None], 'true_mesh')
+            self.display_estimated_mesh(epoch, additional_visuals['flamelayer'], additional_visuals['estimated_mesh'][additional_visuals['verbose_batch_ind']],
+                                        additional_visuals['estimated_texture_map'][additional_visuals['verbose_batch_ind'], None], 'estimated_mesh')
+
+
         except:
             pass
 

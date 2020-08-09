@@ -33,12 +33,13 @@ from models import create_model
 from util.visualizer import save_images
 from util import html
 
-
+import torch
 if __name__ == '__main__':
     opt = TestOptions().parse()  # get test options
     # hard-code some parameters for test
     opt.num_threads = 0   # test code only supports num_threads = 1
     opt.batch_size = 1    # test code only supports batch_size = 1
+    opt.save_to_video = 1
     opt.serial_batches = True  # disable data shuffling; comment this line if results on randomly chosen images are needed.
     opt.no_flip = True    # no flip; comment this line if results on flipped images are needed.
     opt.display_id = -1   # no visdom display; the test code saves the results to a HTML file.
@@ -56,6 +57,21 @@ if __name__ == '__main__':
     # For [CycleGAN]: It should not affect CycleGAN as CycleGAN uses instancenorm without dropout.
     if opt.eval:
         model.eval()
+    if opt.save_to_video:
+        import numpy as np
+        from PIL import Image, ImageDraw
+        import cv2
+        import util, html
+
+        videodims = (768, 256)
+        # fourcc =cv2.VideoWriter_fourcc(*"mp4v")
+        fourcc = cv2.VideoWriter_fourcc(*'XVID')
+        video = cv2.VideoWriter("out/test.avi", fourcc, 10.0, videodims)
+
+        img = Image.new('RGB', videodims, color='darkred')
+        # draw stuff that goes on every frame here
+        # for i in range(0, 60 * 60):
+
     for i, data in enumerate(dataset):
         if i >= opt.num_test:  # only apply our model to opt.num_test images.
             break
@@ -63,7 +79,20 @@ if __name__ == '__main__':
         model.test()           # run inference
         visuals = model.get_current_visuals()  # get image results
         img_path = model.get_image_paths()     # get image paths
+        if opt.save_to_video:
+            from util.util import tensor2im
+
+            combines_image = torch.cat(
+                (dict(visuals.items())['real_A'], dict(visuals.items())['fake_B'], dict(visuals.items())['real_B']), -1)
+            imtemp = tensor2im(combines_image)
+
+            # draw frame specific stuff here.
+            # video.write(cv2.cvtColor(np.array(imtemp), cv2.COLOR_RGB2BGR))
+            video.write(cv2.cvtColor(imtemp, cv2.COLOR_RGB2BGR))
+
+
         if i % 5 == 0:  # save images to an HTML file
             print('processing (%04d)-th image... %s' % (i, img_path))
         save_images(webpage, visuals, img_path, aspect_ratio=opt.aspect_ratio, width=opt.display_winsize)
     webpage.save()  # save the HTML
+    video.release()

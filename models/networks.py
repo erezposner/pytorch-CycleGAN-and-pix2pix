@@ -633,7 +633,7 @@ class UnetSkipConnectionBlockStub(nn.Module):
                 conv_list.append(nn.LeakyReLU(0.2, True))
                 if i < iterations-1:
                     conv_list.append(nn.BatchNorm2d(inner_nc))
-            conv_list.append(nn.Flatten(0, -1))
+            # conv_list.append(nn.Flatten(-1))
             for i in range(linear_iterations):
                 conv_list.append(nn.Linear(inner_nc // 2 ** i, inner_nc // 2 ** (i + 1)))
                 # conv_list.append(nn.InstanceNorm1d(inner_nc // 2 ** (i + 1)))
@@ -683,7 +683,7 @@ class UnetSkipConnectionBlockStub(nn.Module):
         if self.innermost:
             l =  container(self.model_down, x)
             y = torch.cat([x, container(self.model_up, l)], 1)
-            self.flame_regressed_params = container(self.model_flame_regression,l).unsqueeze(0)
+            self.flame_regressed_params = container(self.model_flame_regression,l.view(l.shape[0],-1)).unsqueeze(0)
             return y
         # if self.innermost:
         #     y = torch.cat([x, container(self.model, x)], 1)

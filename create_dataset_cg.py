@@ -11,12 +11,13 @@ def get_all_samples_from_cg_ds(ds_path):
 
 # TODO bind volume of dataset to /opt/data in settings
 
-dataset_path = Path('/opt/data/Subject 1')
-dataset_path = Path('/opt/data/master_reconstruction')
+# dataset_path = Path('/opt/data/Subject 1')
+# dataset_path = Path('/opt/data/master_reconstruction')
+dataset_path = Path('/opt/qnap/Rani/output/Ranni2_lmks51')
 # samples = glob.glob(str(dataset_path / '*'))
 samples = get_all_samples_from_cg_ds(dataset_path)
 print(f'{len(samples)} were found. Starting copying...')
-dataset_output_path = Path('./datasets/before_combine/DVP_CP')
+dataset_output_path = Path('./datasets/before_combine/DVP_RANNI')
 import numpy as np
 
 modes = ['train', 'test', 'val']
