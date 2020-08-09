@@ -273,13 +273,13 @@ class HybridModel(BaseModel):
 
         """Calculate additional output images for visdom and HTML visualization"""
 
-        self.real_A = self.real_A[None,self.verbose_batch_ind]
-        self.warped_input_texture_map = self.warped_input_texture_map[None,self.verbose_batch_ind]
-        self.fake_Texture = self.fake_Texture[None,self.verbose_batch_ind]
-        self.yam_rendered_img = self.yam_rendered_img[None,self.verbose_batch_ind]
-        self.fake_B = self.fake_B[None,self.verbose_batch_ind]
-        self.real_B = self.real_B[None,self.verbose_batch_ind]
-        self.loss_3d_face_part_segmentation_de = self.loss_3d_face_part_segmentation_de[None,None,self.verbose_batch_ind]
+        self.real_A = self.real_A[None, self.verbose_batch_ind]
+        self.warped_input_texture_map = self.warped_input_texture_map[None, self.verbose_batch_ind]
+        self.fake_Texture = self.fake_Texture[None, self.verbose_batch_ind]
+        self.yam_rendered_img = self.yam_rendered_img[None, self.verbose_batch_ind]
+        self.fake_B = self.fake_B[None, self.verbose_batch_ind]
+        self.real_B = self.real_B[None, self.verbose_batch_ind]
+        self.loss_3d_face_part_segmentation_de = self.loss_3d_face_part_segmentation_de[None, None, self.verbose_batch_ind]
 
         pass
 
@@ -314,7 +314,10 @@ class HybridModel(BaseModel):
                                              transl=self.true_flame_params['transl'].squeeze(1),
                                              eye_pose=torch.zeros((self.opt.batch_size, self.eyball_pose_size)).cuda())
         texture_map = UnNormalize(self.real_A).permute(0, 2, 3, 1)
-        texture = Textures(texture_map, faces_uvs=self.faces_uvs1, verts_uvs=self.verts_uvs1)
+        texture = Textures(texture_map, faces_uvs=self.faces_uvs1.repeat(self.opt.batch_size, 1, 1), verts_uvs=self.verts_uvs1.repeat(self.opt.batch_size, 1, 1))
+
+
+
         #
         self.true_mesh = make_mesh(self.true_vertices, self.flamelayer.faces, False, texture)
         # final_obj = os.path.join('out/', 'final_model.obj')

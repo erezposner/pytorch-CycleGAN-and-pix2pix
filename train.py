@@ -43,7 +43,7 @@ if __name__ == '__main__':
 
     opt = TrainOptions().parse()  # get training options
     opt.no_flip = True
-    overfit_one_sample = True
+    overfit_one_sample = False
     if overfit_one_sample:
         opt.serial_batches = True  # TODO change back when training
     dataset = create_dataset(opt)  # create a dataset given opt.dataset_mode and other options
