@@ -51,3 +51,9 @@ smpl_model/*
 resources/vgg19
 docs/.~lock.segmentation_annotation.ods#
 /resources/resnet_18/resnet18-5c106cde.pth
+runs/
+.directory
+.run/
+checkpointkpoint
+checkpoint
+resources/backgrounds/
