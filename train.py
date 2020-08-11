@@ -38,7 +38,6 @@ if __name__ == '__main__':
 
     gc.collect()
     torch.cuda.empty_cache()
-
     # default `log_dir` is "runs" - we'll be more specific here
 
     opt = TrainOptions().parse()  # get training options
@@ -84,12 +83,18 @@ if __name__ == '__main__':
 
                 try:
                     if save_result or (opt.isTrain and not opt.no_html):
-                        final_obj = os.path.join(visualizer.img_dir, 'epoch%.3d_%s.obj' % (total_iters // opt.batch_size, 'mesh'))
-                        save_obj(final_obj, model.estimated_mesh[model.verbose_batch_ind].verts_packed(),
+                        estimated_obj_path = os.path.join(visualizer.img_dir, 'epoch%.3d_%s.obj' % (total_iters // opt.batch_size, 'estimated_mesh'))
+                        true_obj_path = os.path.join(visualizer.img_dir, 'epoch%.3d_%s.obj' % (total_iters // opt.batch_size, 'true_mesh'))
+                        save_obj(estimated_obj_path, model.estimated_mesh[model.verbose_batch_ind].verts_packed(),
                                  torch.from_numpy(model.flamelayer.faces.astype(np.int32)),
                                  verts_uvs=model.estimated_mesh[model.verbose_batch_ind].textures.verts_uvs_packed(),
                                  texture_map=model.estimated_texture_map[None, model.verbose_batch_ind],
                                  faces_uvs=model.estimated_mesh[model.verbose_batch_ind].textures.faces_uvs_packed())
+                        save_obj(true_obj_path, model.true_mesh[model.verbose_batch_ind].verts_packed(),
+                                 torch.from_numpy(model.flamelayer.faces.astype(np.int32)),
+                                 verts_uvs=model.true_mesh[model.verbose_batch_ind].textures.verts_uvs_packed(),
+                                 texture_map=model.true_mesh.textures.maps_padded()[None, model.verbose_batch_ind],
+                                 faces_uvs=model.true_mesh[model.verbose_batch_ind].textures.faces_uvs_packed())
                 except:
                     pass
             if total_iters % opt.print_freq == 0 or overfit_one_sample:  # print training losses and save logging information to the disk

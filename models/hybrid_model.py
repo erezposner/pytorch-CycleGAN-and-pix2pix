@@ -12,12 +12,16 @@ from util import batch_transforms
 from util.util import UnNormalize, Normalize
 from .base_model import BaseModel
 from . import networks
-from .FlameDecoder import FlameDecoder
+# from .FlameDecoder import FlameDecoder
+from Gavros.Models.FLAME.FlameDecoder import FlameDecoder
 from types import SimpleNamespace
 from torchvision.transforms import transforms
 from PIL import Image
 from pathlib import Path
 from .face_part_seg.FacePartSegmentation import FacePartSegmentation
+from Gavros.Utils.pytorch3DUtils.renderer import Renderer
+from PIL import ImageDraw
+from Gavros.Utils.pytorch3DUtils.renderer import Renderer
 
 from .mesh_making import make_mesh
 import pickle
@@ -56,13 +60,20 @@ class HybridModel(BaseModel):
         parser.set_defaults(norm='batch', netG='unet_256_stub_318', dataset_mode='cg_aligned')
         if is_train:
             parser.set_defaults(pool_size=0, gan_mode='vanilla')
-            parser.add_argument('--lambda_L1', type=float, default=5 / 2 * 6.42 * 1e-5, help='weight for L1 loss')
-            parser.add_argument('--lambda_silhouette', type=float, default=1e-5,
-                                help='weight for silhouette loss')
-            parser.add_argument('--lambda_face_seg', type=float, default=1.5 * 3.75e-5 / 1.28,
-                                help='weight for face parts segmentation loss')
-            parser.add_argument('--lambda_flame_regularizer', type=float, default=200.0,  # 500.0
-                                help='weight for flame regularizer loss')
+
+            parser.add_argument('--lambda_L1', type=float, default=3 / 2 * 6.42 * 1e-5, help='weight for L1 loss')
+
+            parser.add_argument('--lambda_ears_photometric_variance', type=float, default=10, help='weight for ears photometric variance loss')
+
+            parser.add_argument('--lambda_landmarks', type=float, default=0.1e0, help='weight for L1 loss')
+
+            parser.add_argument('--lambda_silhouette', type=float, default=1e-5, help='weight for silhouette loss')
+
+            parser.add_argument('--lambda_face_seg', type=float, default=0.5 * 3.75e-5 / 1.28, help='weight for face parts segmentation loss')
+
+            parser.add_argument('--lambda_flame_regularizer', type=float, default=200.0, help='weight for flame regularizer loss')
+
+            parser.add_argument('--lambda_texture_regularizer', type=float, default=1.0 * 1e-6, help='weight for flame texture regularizer loss')
 
         return parser
 
@@ -86,11 +97,16 @@ class HybridModel(BaseModel):
             opt (Option class)-- stores all the experiment flags; needs to be a subclass of BaseOptions
         """
         BaseModel.__init__(self, opt)
-        config = SimpleNamespace(batch_size=self.opt.batch_size, flame_model_path='./smpl_model/flame2020/male_model.pkl')
+        config = SimpleNamespace(device=self.device, batch_size=self.opt.batch_size, flame_model_path='./smpl_model/flame2020/male_model.pkl', texture_data_path='./smpl_model/texture_data.npy')
 
         self.backgrounds_folder = f'resources/backgrounds'
         self.num_of_backgrounds = len(list(Path(self.backgrounds_folder).glob('*')))
         self.flamelayer = FlameDecoder(config)
+        self.flamelayer.load_texture_data_from_resources(texture_data_path=config.texture_data_path)
+        self.flame_lmk_faces_idx, self.flame_lmk_bary_coords = self.flamelayer.load_dlib_static_landmarks_embeddings()
+        self.flame_lmk_bary_coords = self.flame_lmk_bary_coords.to(self.device)
+        self.flame_lmk_faces_idx = self.flame_lmk_faces_idx.to(self.device)
+
         self.flamelayer.to(self.device)
 
         # config.use_3D_translation = True  # could be removed, depending on the camera model
@@ -99,10 +115,11 @@ class HybridModel(BaseModel):
 
         # specify the training losses you want to print out. The training/test scripts will call <BaseModel.get_current_losses>
         # self.loss_names = ['G_GAN', 'G_L1', 'D_real', 'D_fake']
-        self.loss_names = ['G_GAN', 'G_L1', 'D_real', 'D_fake', '3d_face_part_segmentation', 'segmented_ears_colored_variance']
+        self.loss_names = ['G_GAN', 'G_L1', 'D_real', 'D_fake', '3d_face_part_segmentation', '2d_face_part_segmentation', 'segmented_ears_colored_variance', '2d_landmarks', 'fake_texture_Reg']
         # specify the images you want to save/display. The training/test scripts will call <BaseModel.get_current_visuals>
         # self.visual_names = ['real_A', 'fake_Texture', 'fake_B', 'real_B','loss_G_L1_reducted']
-        self.visual_names = ['real_A', 'warped_input_texture_map', 'fake_Texture', 'yam_rendered_img', 'fake_B', 'real_B', 'loss_3d_face_part_segmentation_de']
+        self.visual_names = ['real_A', 'warped_input_texture_map', 'fake_Texture', 'yam_rendered_img', 'fake_B', 'real_B', 'loss_3d_face_part_segmentation_de', 'landmarks_img',
+                             'loss_2d_face_part_segmentation_de']
         # self.visual_names = ['fake_Texture', 'fake_B', 'real_B']
         # specify the models you want to save to the disk. The training/test scripts will call <BaseModel.save_networks> and <BaseModel.load_networks>
         if self.isTrain:
@@ -138,9 +155,10 @@ class HybridModel(BaseModel):
             # self.visual_names.append('loss_G_L1_reducted')
             self.criterionGAN = networks.GANLoss(opt.gan_mode, soft_labels=self.opt.soft_labels).to(self.device)
             self.criterionL1 = torch.nn.L1Loss(reduction='none')
-            # self.CrossEntropyCriterion = torch.nn.CrossEntropyLoss(reduction='none')
+            self.criterionL2 = torch.nn.MSELoss(reduction='none')
             self.CrossEntropyCriterion1 = torch.nn.NLLLoss(reduction='none')
-            self.CrossEntropyCriterion2 = torch.nn.L1Loss(reduction='none')
+            # self.CrossEntropyCriterion2 = torch.nn.L1Loss(reduction='none')
+            self.CrossEntropyCriterion3 = torch.nn.CrossEntropyLoss(reduction='none')
             self.criterionBCE = torch.nn.BCELoss(reduction='none')
 
             # initialize optimizers; schedulers will be automatically created by function <BaseModel.setup>.
@@ -246,6 +264,13 @@ class HybridModel(BaseModel):
                 colormap=self.weights_texture_map.repeat(self.opt.batch_size, 1, 1, 1)
             )
         )
+        cam_params = SimpleNamespace(device=self.device,
+                                     distance=distance,
+                                     elevation=0,
+                                     azimuth=0,
+                                     resolution=self.opt.crop_size,
+                                     )
+        self.points_renderer = Renderer(self.opt.crop_size, cam_params)
 
         # Create a silhouette mesh renderer by composing a rasterizer and a shader.
         self.silhouette_renderer = MeshRenderer(
@@ -280,7 +305,19 @@ class HybridModel(BaseModel):
         self.fake_B = self.fake_B[None, self.verbose_batch_ind]
         self.real_B = self.real_B[None, self.verbose_batch_ind]
         self.loss_3d_face_part_segmentation_de = self.loss_3d_face_part_segmentation_de[None, None, self.verbose_batch_ind]
+        self.loss_2d_face_part_segmentation_de = Normalize(self.loss_2d_face_part_segmentation_de[None, None, self.verbose_batch_ind].float() / 20)
 
+
+
+        img = transforms.ToPILImage()(UnNormalize(self.fake_B[self.verbose_batch_ind]).detach().cpu())
+        r = 2
+        for i in range(self.projected_fake_2d_landmarks[self.verbose_batch_ind].shape[0]):
+            x, y = self.projected_fake_2d_landmarks[self.verbose_batch_ind][i]
+            x_real, y_real = self.real_B_2d_landmarks[self.verbose_batch_ind][i]
+            draw = ImageDraw.Draw(img)
+            draw.ellipse((x - r, y - r, x + r, y + r), fill=(255, 0, 0, 0))
+            draw.ellipse((x_real - r, y_real - r, x_real + r, y_real + r), fill=(0, 0, 255, 0))
+        self.landmarks_img = Normalize(transforms.ToTensor()(img)).unsqueeze(0)
         pass
 
     def set_input(self, input_data):
@@ -295,6 +332,8 @@ class HybridModel(BaseModel):
         self.real_A = input_data['A' if AtoB else 'B'].to(self.device)
         self.real_B = input_data['B' if AtoB else 'A'].to(self.device)
         self.true_flame_params = input_data['true_flame_params']
+        self.real_B_2d_landmarks = input_data['captured_2d_landmarks'].to(self.device)
+        self.A_2d_landmarks_found = input_data['A_2d_landmarks_found'].to(self.device)
         self.yam_rendered_img = input_data['yam_rendered_img'].to(self.device)
         for k in self.true_flame_params.keys():
             self.true_flame_params[k] = self.true_flame_params[k].to(self.device)
@@ -305,6 +344,7 @@ class HybridModel(BaseModel):
         self.true_mask = self.true_mask.clamp(0, 1)
         self.image_paths = input_data['A_paths' if AtoB else 'B_paths']
         self.current_batch_size = self.true_flame_params['shape_params'].shape[0]
+        # print(f'self.current_batch_size  = {self.current_batch_size}' )
 
         self.create_true_mesh_from_initial_guess()
 
@@ -317,8 +357,6 @@ class HybridModel(BaseModel):
                                              eye_pose=torch.zeros((self.current_batch_size, self.eyball_pose_size)).cuda())
         texture_map = UnNormalize(self.real_A).permute(0, 2, 3, 1)
         texture = Textures(texture_map, faces_uvs=self.faces_uvs1.repeat(self.current_batch_size, 1, 1), verts_uvs=self.verts_uvs1.repeat(self.current_batch_size, 1, 1))
-
-
 
         #
         self.true_mesh = make_mesh(self.true_vertices, self.flamelayer.faces, False, texture)
@@ -470,7 +508,7 @@ class HybridModel(BaseModel):
                 xv = xv.unsqueeze(0).unsqueeze(0) / 127.5 - 1
                 yv = yv.unsqueeze(0).unsqueeze(0) / 127.5 - 1
                 uvs_init = torch.cat((xv, yv), 1).permute(0, 2, 3, 1).to(self.device)
-                self.warped_input_texture_map = F.grid_sample(self.real_A, uvs_init + flow_field.permute(0, 2, 3, 1) / 10, align_corners=True)
+                self.warped_input_texture_map = F.grid_sample(self.real_A, uvs_init + flow_field.permute(0, 2, 3, 1) / 5, align_corners=True)
                 self.fake_Texture = fake_Texture_gen + self.warped_input_texture_map
                 # self.fake_Texture = fake_Texture_gen + F.grid_sample(self.real_A, uvs_init ,align_corners=True)
                 # self.fake_Texture = F.grid_sample(self.real_A, uvs_init + self.uvs.permute(0, 2, 3, 1) / 10)
@@ -495,11 +533,17 @@ class HybridModel(BaseModel):
                         self.fake_flame = data
 
             zero_out_estimated_geomtery = False
-            self.fake_geo_from_flame = self.create_geo_from_flame_params(self.fake_flame.permute(1, 0, 2) / 1000, base_flame_params=self.true_flame_params, use_fix_params=zero_out_estimated_geomtery)
+            self.fake_geo_from_flame = self.create_geo_from_flame_params(self.fake_flame.permute(1, 0, 2) / 100, base_flame_params=self.true_flame_params, use_fix_params=zero_out_estimated_geomtery)
+
+            landmarks_static_3d = self.flamelayer.get_static_dlib_3D_landmarks(self.fake_geo_from_flame, self.flame_lmk_faces_idx.repeat(self.current_batch_size, 1),
+                                                                               self.flame_lmk_bary_coords.repeat(self.current_batch_size, 1, 1))
+
+            self.projected_fake_2d_landmarks = self.points_renderer.transform_points(landmarks_static_3d)
 
             self.fake_B, self.fake_B_silhouette, self.cull_backfaces_mask, self.segmented_3d_model_image, self.weights_3d_model_image = self.project_to_image_plane(self.fake_geo_from_flame,
                                                                                                                                                                     UnNormalize(self.fake_Texture),
                                                                                                                                                                     self.opt.constant_data)
+
             # self.estimated_texture_map = UnNormalize(self.real_A).permute(0, 2, 3, 1) #TODO remove
             # self.fake_B, self.fake_B_silhouette, self.cull_backfaces_mask, self.segmented_3d_model_image = self.project_to_image_plane(self.fake_geo_from_flame, UnNormalize(self.real_A),
             #                                                                                                                            self.opt.constant_data)
@@ -531,7 +575,6 @@ class HybridModel(BaseModel):
 
     def flame_regularizer_loss(self, vertices):
         # pose_params = torch.cat([self.global_rot, self.jaw_pose], dim=1)
-
         shape_params = self.shape_params
         flame_reg = self.weights['neck_pose'] * torch.sum(self.neck_pose ** 2) + \
                     self.weights['jaw_pose'] * torch.sum(self.jaw_pose ** 2) + \
@@ -554,34 +597,21 @@ class HybridModel(BaseModel):
         self.loss_D = (self.loss_D_fake + self.loss_D_real) * 0.5
         self.loss_D.backward()
 
-    def backward_G(self):
-        """Calculate GAN and L1 loss for the generator"""
-        # First, G(A) should fake the discriminator
-        fake_AB = torch.cat((self.real_A, self.fake_correspondence_map, self.fake_B), 1)
-        pred_fake = self.netD(fake_AB)
-        self.loss_G_GAN = self.criterionGAN(pred_fake, True)
-        # Second, G(A) = B
-
-        # self.loss_G_L1_reducted = self.loss_G_L1_reducted.abs().mean(1).unsqueeze(0).clamp(0, 255)
-
-        self.loss_F_Reg = self.flame_regularizer_loss(self.fake_geo_from_flame) * self.opt.lambda_flame_regularizer
-        # silhouette loss
+    def compute_silhouette_loss(self):
         self.loss_silhouette_de = self.rect_mask * self.criterionBCE(
             self.rect_mask * self.fake_B_silhouette.permute(0, 3, 1, 2),
             self.rect_mask * self.true_mask)
-
-        eta = 0.01
         self.loss_silhouette = self.loss_silhouette_de.sum() * self.opt.lambda_silhouette
+
+    def compute_facial_parts_segmentation_loss(self):
         self.segmented_3d_one_hot_model_image = torch.nn.functional.one_hot(
             (self.segmented_3d_model_image[:, 0, :, :]).long()).float().permute(0, 3, 1, 2)
-
         segmented_ears_mask = self.segmented_3d_one_hot_model_image[:, None, self.segmentation_parts_dict['l_ear'], :, :].clone()
+        eta = 0.01
 
         self.segmented_3d_one_hot_model_image[self.segmented_3d_one_hot_model_image == 0] = self.segmented_3d_one_hot_model_image[self.segmented_3d_one_hot_model_image == 0] + eta
-        # self.weights_3d_model_image = self.weights_3d_model_image[:, 0, :, :]
         self.loss_3d_face_part_segmentation = self.CrossEntropyCriterion1(torch.log(self.segmented_3d_one_hot_model_image),
                                                                           self.real_B_seg.long())
-        self.loss_3d_face_part_segmentation = self.loss_3d_face_part_segmentation  # * self.weights_3d_model_image[:,0,:,:]
 
         # Todo This code below is for removing l1 loss where differences with segmentation - not tested!
         self.loss_3d_face_part_segmentation_de = self.loss_3d_face_part_segmentation.clamp(0, 255)
@@ -591,20 +621,13 @@ class HybridModel(BaseModel):
         #                                                                  self.real_B_seg.float()) * self.opt.lambda_face_seg
         # self.loss_3d_face_part_segmentation_de = self.loss_3d_face_part_segmentation.clamp(0,255).unsqueeze(0) / 255
         # transforms.ToPILImage()(self.loss_3d_face_part_segmentation_de.cpu().squeeze()).save('out/loss_3d_face_part_segmentation.png')
-        if self.opt.verbose:
-            transforms.ToPILImage()(self.loss_3d_face_part_segmentation_de[self.verbose_batch_ind].cpu().squeeze()).save('out/loss_3d_face_part_segmentation.png')
-            transforms.ToPILImage()(self.weights_3d_model_image[self.verbose_batch_ind].cpu().squeeze()).save('out/weights_3d_model_image.png')
-
-        self.loss_3d_face_part_segmentation = self.loss_3d_face_part_segmentation.sum() * self.opt.lambda_face_seg  # * self.opt.lambda_face_seg
-        self.loss_G_L1_reducted = self.criterionL1(self.fake_B,
-                                                   self.real_B) * self.rect_mask  # * (1 - self.weights_3d_model_image)  # * self.loss_3d_face_part_segmentation_de  # * self.l1_weight_mask # * self.cull_backfaces_mask
 
         ## region compute ear variance
-        segmented_ears_colored_variance = segmented_ears_mask.expand_as(self.fake_B) * UnNormalize(self.fake_B)
+        self.segmented_ears_colored_variance = segmented_ears_mask.expand_as(self.fake_B) * UnNormalize(self.fake_B)
 
-        r_segmented_ears_colored_variance = segmented_ears_colored_variance[:, None, 0, :, :]
-        g_segmented_ears_colored_variance = segmented_ears_colored_variance[:, None, 1, :, :]
-        b_segmented_ears_colored_variance = segmented_ears_colored_variance[:, None, 2, :, :]
+        r_segmented_ears_colored_variance = self.segmented_ears_colored_variance[:, None, 0, :, :]
+        g_segmented_ears_colored_variance = self.segmented_ears_colored_variance[:, None, 1, :, :]
+        b_segmented_ears_colored_variance = self.segmented_ears_colored_variance[:, None, 2, :, :]
 
         color_var = 0
         for i in range(self.current_batch_size):
@@ -612,27 +635,66 @@ class HybridModel(BaseModel):
             color_var = color_var + g_segmented_ears_colored_variance[i][g_segmented_ears_colored_variance[i] > 0].var(dim=-1)
             color_var = color_var + b_segmented_ears_colored_variance[i][b_segmented_ears_colored_variance[i] > 0].var(dim=-1)
 
-        self.loss_segmented_ears_colored_variance = color_var * 100
-        # endregion
+        self.loss_segmented_ears_colored_variance = color_var * self.opt.lambda_ears_photometric_variance
+
+    def backward_G(self):
+        """Calculate GAN and L1 loss for the generator"""
+        # First, G(A) should fake the discriminator
+        fake_AB = torch.cat((self.real_A, self.fake_correspondence_map, self.fake_B), 1)
+        pred_fake = self.netD(fake_AB)
+        self.loss_G_GAN = self.criterionGAN(pred_fake, True)
+        # Second, G(A) = B
+
+        self.loss_F_Reg = self.flame_regularizer_loss(self.fake_geo_from_flame) * self.opt.lambda_flame_regularizer
+
+        self.loss_fake_texture_Reg = torch.sum((self.fake_Texture + 1) ** 2) * self.opt.lambda_texture_regularizer
+
+        self.compute_silhouette_loss()
+
+        self.compute_facial_parts_segmentation_loss()
+
+        # if self.opt.verbose:
+
+        self.loss_3d_face_part_segmentation = self.loss_3d_face_part_segmentation.sum() * self.opt.lambda_face_seg  # * self.opt.lambda_face_seg
+
+        self.loss_G_L1_reducted = self.criterionL1(self.fake_B, self.real_B) * self.rect_mask
+        # * (1 - self.weights_3d_model_image)  # * self.loss_3d_face_part_segmentation_de  # * self.l1_weight_mask # * self.cull_backfaces_mask
+
         self.loss_G_L1 = self.loss_G_L1_reducted.abs().sum() * self.opt.lambda_L1
-        # self.loss_2d_face_part_segmentation = self.CrossEntropyCriterion(self.fake_B_seg,
-        #                                                                  self.real_B_seg.long()) * self.opt.lambda_face_seg
+
+        self.loss_2d_face_part_segmentation = self.loss_2d_face_part_segmentation_de.sum() * self.opt.lambda_face_seg
+
+        self.loss_2d_landmarks = self.criterionL2(self.projected_fake_2d_landmarks[self.A_2d_landmarks_found], self.real_B_2d_landmarks[self.A_2d_landmarks_found]).mean() * self.opt.lambda_landmarks
         # combine loss and calculate gradients
         self.loss_G = self.loss_G_GAN + \
                       self.loss_G_L1 + \
                       self.loss_F_Reg + \
+                      self.loss_2d_landmarks + \
                       self.loss_3d_face_part_segmentation + \
-                      self.loss_segmented_ears_colored_variance
-        # + self.loss_silhouette
+                      self.loss_segmented_ears_colored_variance + \
+                      self.loss_fake_texture_Reg + \
+                      self.loss_2d_face_part_segmentation
 
         if self.opt.verbose:
+            transforms.ToPILImage()(self.loss_3d_face_part_segmentation_de[self.verbose_batch_ind].cpu().squeeze()).save('out/loss_3d_face_part_segmentation.png')
+            transforms.ToPILImage()(self.weights_3d_model_image[self.verbose_batch_ind].cpu().squeeze()).save('out/weights_3d_model_image.png')
             transforms.ToPILImage()(self.loss_G_L1_reducted[self.verbose_batch_ind].detach().cpu().squeeze() / 10).save('out/L1_reducted.png')
             transforms.ToPILImage()(255 * self.loss_silhouette_de[self.verbose_batch_ind].cpu()).save('out/loss_silhouette.png')
             transforms.ToPILImage()(self.segmented_3d_model_image[self.verbose_batch_ind].cpu().squeeze() / 255).save('out/fake_B_seg_cat.png')
             transforms.ToPILImage()(self.real_B_seg[self.verbose_batch_ind].cpu().squeeze() / 255).save('out/real_B_seg_cat.png')
             transforms.ToPILImage()(UnNormalize(self.real_B[self.verbose_batch_ind]).cpu().squeeze()).save('out/real_B.png')
             transforms.ToPILImage()(UnNormalize(self.fake_B[self.verbose_batch_ind]).cpu().squeeze()).save('out/fake_B.png')
-            transforms.ToPILImage()(segmented_ears_colored_variance[self.verbose_batch_ind].squeeze().detach().cpu()).save('out/segmented_ear_mask.png')
+            transforms.ToPILImage()(self.segmented_ears_colored_variance[self.verbose_batch_ind].squeeze().detach().cpu()).save('out/segmented_ear_mask.png')
+
+            img = transforms.ToPILImage()(UnNormalize(self.fake_B[self.verbose_batch_ind]).detach().cpu())
+            r = 2
+            for i in range(self.projected_fake_2d_landmarks[self.verbose_batch_ind].shape[0]):
+                x, y = self.projected_fake_2d_landmarks[self.verbose_batch_ind][i]
+                x_real, y_real = self.real_B_2d_landmarks[self.verbose_batch_ind][i]
+                draw = ImageDraw.Draw(img)
+                draw.ellipse((x - r, y - r, x + r, y + r), fill=(255, 0, 0, 0))
+                draw.ellipse((x_real - r, y_real - r, x_real + r, y_real + r), fill=(0, 0, 255, 0))
+            img.save('out/projected_fake_2d_landmarks.png')
 
         self.loss_G.backward()
 
@@ -694,19 +756,22 @@ class HybridModel(BaseModel):
         # self.l1_weight_mask = torch.from_numpy(self.l1_weight_mask).repeat(1, 3, 1, 1).cuda().float()
 
         _, self.real_B_seg = self.perform_face_part_segmentation(self.real_B, fname='real_B_seg')
-        self.real_B_seg[self.real_B_seg == 11] = 0  # mask mouth
-        self.real_B_seg[self.real_B_seg == 14] = 0  # mash cloth
-        self.real_B_seg[self.real_B_seg == 16] = 0  # mask neck
-        self.fake_B_seg, _ = self.perform_face_part_segmentation(self.fake_B, fname='fake_B_seg')
-        self.fake_B_seg[self.fake_B_seg == 14] = 0  # mash cloth
-        self.fake_B_seg[self.fake_B_seg == 16] = 0  # mask neck
+        self.fake_B_seg, fake_B_seg_filter = self.perform_face_part_segmentation(self.fake_B, fname='fake_B_seg')
+
+
+
+        self.real_B_seg[self.real_B_seg == self.segmentation_parts_dict['mouth']] = 0  # mask mouth
+        self.real_B_seg[self.real_B_seg == self.segmentation_parts_dict['neck']] = 0  # mask neck
+        self.real_B_seg[self.real_B_seg == self.segmentation_parts_dict['cloth']] = 0  # mash cloth
+        self.fake_B_seg[self.fake_B_seg == self.segmentation_parts_dict['neck']] = 0  # mash neck
+        self.fake_B_seg[self.fake_B_seg == self.segmentation_parts_dict['cloth']] = 0  # mask cloth
 
         # self.fake_B = Normalize(UnNormalize(self.fake_B) * self.rect_mask)
         # self.real_B = Normalize(UnNormalize(self.real_B) * self.rect_mask)
 
         self.segmented_3d_model_image = self.segmented_3d_model_image * self.rect_mask
-        self.segmented_3d_model_image[self.segmented_3d_model_image.round() == self.segmentation_parts_dict['cloth']] = 0  # mash cloth 16
         self.segmented_3d_model_image[self.segmented_3d_model_image.round() == self.segmentation_parts_dict['neck']] = 0  # mask neck 14
+        self.segmented_3d_model_image[self.segmented_3d_model_image.round() == self.segmentation_parts_dict['cloth']] = 0  # mash cloth 16
 
         # mask cloth & neck for images
         mask_seg_val = 1
@@ -718,21 +783,30 @@ class HybridModel(BaseModel):
         self.fake_B[(self.segmented_3d_model_image.sum(dim=1) == 0).unsqueeze(1).repeat(1, 3, 1, 1)] = mask_seg_val
         self.real_B[self.real_B_seg.unsqueeze(1).repeat(1, 3, 1, 1) == 0] = mask_seg_val
         # with torch.no_grad(): #add background image to images
-        background_ind = np.random.randint(0, self.num_of_backgrounds)
-        try:
-            background_img = transforms.ToTensor()(Image.open(f'{self.backgrounds_folder}/img_{background_ind}.png'))
-        except:
-            background_img = transforms.ToTensor()(Image.open(f'{self.backgrounds_folder}/img_{background_ind}.jpg'))
-        self.real_B = torch.where(self.real_B == mask_seg_val, Normalize(background_img[None, :3, ...]).cuda(), self.real_B)
-        self.fake_B = torch.where(self.fake_B == mask_seg_val, Normalize(background_img[None, :3, ...]).cuda(), self.fake_B)
+        use_background = True
+        if use_background:
+            background_ind = np.random.randint(0, self.num_of_backgrounds)
+            try:
+                background_img = transforms.ToTensor()(Image.open(f'{self.backgrounds_folder}/img_{background_ind}.png'))
+            except:
+                background_img = transforms.ToTensor()(Image.open(f'{self.backgrounds_folder}/img_{background_ind}.jpg'))
+            self.real_B = torch.where(self.real_B == mask_seg_val, Normalize(background_img[None, :3, ...]).cuda(), self.real_B)
+            self.fake_B = torch.where(self.fake_B == mask_seg_val, Normalize(background_img[None, :3, ...]).cuda(), self.fake_B)
         #
         # cv2.imwrite('out/dr.png', 255 * UnNormalize(self.real_B).detach().cpu().squeeze().permute(1, 2, 0).numpy())
         # cv2.imwrite('out/df.png', 255 * UnNormalize(self.fake_B).detach().cpu().squeeze().permute(1, 2, 0).numpy())
+        ## compute 2d face part segmentation loss
+        self.loss_2d_face_part_segmentation_de = self.CrossEntropyCriterion3(self.fake_B_seg, self.real_B_seg.long())  # * self.opt.lambda_face_seg
+        self.loss_2d_face_part_segmentation_de[self.real_B_seg == self.segmentation_parts_dict['mouth']] = 0  # mask mouth
+        self.loss_2d_face_part_segmentation_de[self.real_B_seg == self.segmentation_parts_dict['neck']] = 0  # mask neck
+        self.loss_2d_face_part_segmentation_de[self.real_B_seg == self.segmentation_parts_dict['cloth']] = 0  # mash cloth
+        self.loss_2d_face_part_segmentation_de[fake_B_seg_filter == self.segmentation_parts_dict['neck']] = 0  # mash neck
+        self.loss_2d_face_part_segmentation_de[fake_B_seg_filter == self.segmentation_parts_dict['cloth']] = 0  # mask cloth
+        self.loss_2d_face_part_segmentation_de = self.loss_2d_face_part_segmentation_de  * self.rect_mask[:, 0, ...]
 
-        # self.mask = self.mask * self.true_mask
 
     def optimize_parameters(self):
-        iteration = 1
+        iteration = 2
         # seed = np.random.randint(0, 100000, (1,))
         seed = np.random.randint(0, 100000, 1)
         for i in range(iteration):  # discriminator-generator balancing
