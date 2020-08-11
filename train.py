@@ -38,12 +38,13 @@ if __name__ == '__main__':
 
     gc.collect()
     torch.cuda.empty_cache()
-
     # default `log_dir` is "runs" - we'll be more specific here
 
     opt = TrainOptions().parse()  # get training options
     opt.no_flip = True
-    # opt.serial_batches = True  # TODO change back when training
+    overfit_one_sample = False
+    if overfit_one_sample:
+        opt.serial_batches = True  # TODO change back when training
     dataset = create_dataset(opt)  # create a dataset given opt.dataset_mode and other options
     dataset_size = len(dataset)  # get the number of images in the dataset.
     print('The number of training images = %d' % dataset_size)
@@ -63,7 +64,6 @@ if __name__ == '__main__':
         iter_data_time = time.time()  # timer for data loading per iteration
         epoch_iter = 0  # the number of training iterations in current epoch, reset to 0 every epoch
         visualizer.reset()  # reset the visualizer: make sure it saves the results to HTML at least once every epoch
-        overfit_one_sample = False
         for i, data in enumerate(dataset):  # inner loop within one epoch
             # writer.add_scalar("Loss/train", i, epoch)
 
@@ -79,16 +79,22 @@ if __name__ == '__main__':
             if total_iters % opt.display_freq == 0 or overfit_one_sample:  # display images on visdom and save images to a HTML file
                 save_result = total_iters % opt.update_html_freq == 0
                 model.compute_visuals()
-                visualizer.display_current_results(model.get_current_visuals(),total_iters // opt.batch_size, save_result, model.get_additional_visuals())
+                visualizer.display_current_results(model.get_current_visuals(), total_iters // opt.batch_size, save_result, model.get_additional_visuals())
 
                 try:
                     if save_result or (opt.isTrain and not opt.no_html):
-                        final_obj = os.path.join(visualizer.img_dir, 'epoch%.3d_%s.obj' % (total_iters // opt.batch_size, 'mesh'))
-                        save_obj(final_obj, model.estimated_mesh.verts_packed(),
+                        estimated_obj_path = os.path.join(visualizer.img_dir, 'epoch%.3d_%s.obj' % (total_iters // opt.batch_size, 'estimated_mesh'))
+                        true_obj_path = os.path.join(visualizer.img_dir, 'epoch%.3d_%s.obj' % (total_iters // opt.batch_size, 'true_mesh'))
+                        save_obj(estimated_obj_path, model.estimated_mesh[model.verbose_batch_ind].verts_packed(),
                                  torch.from_numpy(model.flamelayer.faces.astype(np.int32)),
-                                 verts_uvs=model.estimated_mesh.textures.verts_uvs_packed(),
-                                 texture_map=model.estimated_texture_map,
-                                 faces_uvs=model.estimated_mesh.textures.faces_uvs_packed())
+                                 verts_uvs=model.estimated_mesh[model.verbose_batch_ind].textures.verts_uvs_packed(),
+                                 texture_map=model.estimated_texture_map[None, model.verbose_batch_ind],
+                                 faces_uvs=model.estimated_mesh[model.verbose_batch_ind].textures.faces_uvs_packed())
+                        save_obj(true_obj_path, model.true_mesh[model.verbose_batch_ind].verts_packed(),
+                                 torch.from_numpy(model.flamelayer.faces.astype(np.int32)),
+                                 verts_uvs=model.true_mesh[model.verbose_batch_ind].textures.verts_uvs_packed(),
+                                 texture_map=model.true_mesh.textures.maps_padded()[None, model.verbose_batch_ind],
+                                 faces_uvs=model.true_mesh[model.verbose_batch_ind].textures.faces_uvs_packed())
                 except:
                     pass
             if total_iters % opt.print_freq == 0 or overfit_one_sample:  # print training losses and save logging information to the disk

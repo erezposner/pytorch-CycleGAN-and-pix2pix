@@ -89,7 +89,9 @@ class FlameDecoder(nn.Module):
         eye_pose = (eye_pose if eye_pose is not None else self.eye_pose)
 
         full_pose = torch.cat([pose_params[:, :3], neck_pose, pose_params[:, 3:], eye_pose], dim=1)
-        template_vertices = self.v_template.unsqueeze(0).repeat(self.batch_size, 1, 1)
+
+
+        template_vertices = self.v_template.unsqueeze(0).repeat(pose_params.shape[0], 1, 1)
         vertices, _ = lbs(betas, full_pose, template_vertices,
                           self.shapedirs, self.posedirs,
                           self.J_regressor, self.parents,
