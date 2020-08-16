@@ -97,7 +97,7 @@ class HybridModel(BaseModel):
             opt (Option class)-- stores all the experiment flags; needs to be a subclass of BaseOptions
         """
         BaseModel.__init__(self, opt)
-        config = SimpleNamespace(device=self.device, batch_size=self.opt.batch_size, flame_model_path='./smpl_model/flame2020/male_model.pkl', texture_data_path='./smpl_model/texture_data.npy')
+        config = SimpleNamespace(device=self.device, batch_size=self.opt.batch_size, flame_model_path='./smpl_model/flame2019/male_model.pkl', texture_data_path='./smpl_model/texture_data.npy')
 
         self.backgrounds_folder = f'resources/backgrounds'
         self.num_of_backgrounds = len(list(Path(self.backgrounds_folder).glob('*')))
@@ -115,7 +115,7 @@ class HybridModel(BaseModel):
 
         # specify the training losses you want to print out. The training/test scripts will call <BaseModel.get_current_losses>
         # self.loss_names = ['G_GAN', 'G_L1', 'D_real', 'D_fake']
-        self.loss_names = ['G_GAN', 'G_L1', 'D_real', 'D_fake', '3d_face_part_segmentation', '2d_face_part_segmentation', 'segmented_ears_colored_variance', '2d_landmarks', 'fake_texture_Reg']
+        self.loss_names = ['G_GAN', 'G_L1', 'D_real', 'D_fake','D_texture', '3d_face_part_segmentation', '2d_face_part_segmentation', 'segmented_ears_colored_variance', '2d_landmarks', 'fake_texture_Reg']
         # specify the images you want to save/display. The training/test scripts will call <BaseModel.get_current_visuals>
         # self.visual_names = ['real_A', 'fake_Texture', 'fake_B', 'real_B','loss_G_L1_reducted']
         self.visual_names = ['real_A', 'warped_input_texture_map', 'fake_Texture', 'yam_rendered_img', 'fake_B', 'real_B', 'loss_3d_face_part_segmentation_de', 'landmarks_img',
@@ -141,7 +141,7 @@ class HybridModel(BaseModel):
 
         # self.netG = networks.define_G(opt.input_nc * 2, opt.output_nc  , opt.ngf, opt.netG, opt.norm,
         self.netG = networks.define_G(opt.input_nc * 2, 5, opt.ngf, opt.netG, opt.norm,
-                                      not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids, image_size=self.opt.crop_size)
+                                      not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids, image_size=self.opt.crop_size, up_sample_method='Not_ConvTranspose2d')
         self.netF = networks.define_F(opt.input_nc, opt.output_flame_params, opt.ngf, opt.netG, opt.norm,
                                       not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids)
         self.verbose_batch_ind = 0
@@ -149,6 +149,8 @@ class HybridModel(BaseModel):
         if self.isTrain:  # define a discriminator; conditional GANs need to take both input and output images; Therefore, #channels for D is input_nc + output_nc
             self.netD = networks.define_D(opt.input_nc * 2 + opt.output_nc, opt.ndf, opt.netD,
                                           opt.n_layers_D, opt.norm, opt.init_type, opt.init_gain, self.gpu_ids)
+            self.netD_texture = networks.define_D(opt.input_nc, opt.ndf, 'basic',
+                                                  opt.n_layers_D, opt.norm, opt.init_type, opt.init_gain, self.gpu_ids)
 
         if self.isTrain:
             # define loss functions
@@ -166,6 +168,7 @@ class HybridModel(BaseModel):
             self.optimizer_G = torch.optim.Adam(self.netG.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
             self.optimizer_F = torch.optim.Adam(list(self.netF.parameters()) + list(self.netGlobal_shape.parameters()), lr=opt.lr, betas=(opt.beta1, 0.999))
             self.optimizer_D = torch.optim.Adam(self.netD.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
+            self.optimizer_D_texture = torch.optim.Adam(self.netD_texture.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
             # self.optimizer_D = torch.optim.SGD(self.netD.parameters(), lr=opt.lr)  # TODO Check is SGD is better than ADAM
             self.optimizers.append(self.optimizer_G)
             self.optimizers.append(self.optimizer_D)
@@ -306,8 +309,6 @@ class HybridModel(BaseModel):
         self.real_B = self.real_B[None, self.verbose_batch_ind]
         self.loss_3d_face_part_segmentation_de = self.loss_3d_face_part_segmentation_de[None, None, self.verbose_batch_ind]
         self.loss_2d_face_part_segmentation_de = Normalize(self.loss_2d_face_part_segmentation_de[None, None, self.verbose_batch_ind].float() / 20)
-
-
 
         img = transforms.ToPILImage()(UnNormalize(self.fake_B[self.verbose_batch_ind]).detach().cpu())
         r = 2
@@ -593,9 +594,18 @@ class HybridModel(BaseModel):
         real_AB = torch.cat((self.real_A, self.fake_correspondence_map, self.real_B), 1)
         pred_real = self.netD(real_AB)
         self.loss_D_real = self.criterionGAN(pred_real, True)
-        # combine loss and calculate gradients
+
+        pred_real_texture = self.netD_texture(self.real_A)
+        self.loss_D_real_texture = self.criterionGAN(pred_real_texture, True)
+        pred_fake_texture = self.netD_texture(self.fake_Texture)
+        self.loss_D_fake_texture = self.criterionGAN(pred_fake_texture, False)
+
+        self.loss_D_texture = (self.loss_D_fake_texture + self.loss_D_real_texture) * 0.5
         self.loss_D = (self.loss_D_fake + self.loss_D_real) * 0.5
-        self.loss_D.backward()
+
+        # combine loss and calculate gradients
+        self.loss_D_Total = (self.loss_D + self.loss_D_texture) * 0.5
+        self.loss_D_Total.backward(retain_graph=True)
 
     def compute_silhouette_loss(self):
         self.loss_silhouette_de = self.rect_mask * self.criterionBCE(
@@ -758,8 +768,6 @@ class HybridModel(BaseModel):
         _, self.real_B_seg = self.perform_face_part_segmentation(self.real_B, fname='real_B_seg')
         self.fake_B_seg, fake_B_seg_filter = self.perform_face_part_segmentation(self.fake_B, fname='fake_B_seg')
 
-
-
         self.real_B_seg[self.real_B_seg == self.segmentation_parts_dict['mouth']] = 0  # mask mouth
         self.real_B_seg[self.real_B_seg == self.segmentation_parts_dict['neck']] = 0  # mask neck
         self.real_B_seg[self.real_B_seg == self.segmentation_parts_dict['cloth']] = 0  # mash cloth
@@ -802,11 +810,10 @@ class HybridModel(BaseModel):
         self.loss_2d_face_part_segmentation_de[self.real_B_seg == self.segmentation_parts_dict['cloth']] = 0  # mash cloth
         self.loss_2d_face_part_segmentation_de[fake_B_seg_filter == self.segmentation_parts_dict['neck']] = 0  # mash neck
         self.loss_2d_face_part_segmentation_de[fake_B_seg_filter == self.segmentation_parts_dict['cloth']] = 0  # mask cloth
-        self.loss_2d_face_part_segmentation_de = self.loss_2d_face_part_segmentation_de  * self.rect_mask[:, 0, ...]
-
+        self.loss_2d_face_part_segmentation_de = self.loss_2d_face_part_segmentation_de * self.rect_mask[:, 0, ...]
 
     def optimize_parameters(self):
-        iteration = 2
+        iteration = 3
         # seed = np.random.randint(0, 100000, (1,))
         seed = np.random.randint(0, 100000, 1)
         for i in range(iteration):  # discriminator-generator balancing
@@ -818,9 +825,11 @@ class HybridModel(BaseModel):
             # update D
             if i == iteration - 1:
                 self.set_requires_grad(self.netD, True)  # enable backprop for D
+                self.optimizer_D_texture.zero_grad()  # set D's gradients to zero
                 self.optimizer_D.zero_grad()  # set D's gradients to zero
                 self.backward_D()  # calculate gradients for D
                 self.optimizer_D.step()  # update D's weights
+                self.optimizer_D_texture.step()  # update D's weights
             # update G
             self.set_requires_grad(self.netD, False)  # D requires no gradients when optimizing G
             self.optimizer_G.zero_grad()  # set G's gradients to zero
