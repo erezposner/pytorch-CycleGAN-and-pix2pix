@@ -7,6 +7,8 @@ import torchvision
 from torchsummary import summary
 
 import math
+
+
 # class geo(nn.Module):
 #     def __init__(self,gpu_ids=[]):
 #
@@ -26,11 +28,11 @@ import math
 ###############################################################################
 
 
-
 class GlobalShape(nn.Module):
     def __init__(self, shape_params_size):
         super(GlobalShape, self).__init__()
         self.global_shape = torch.nn.Parameter(torch.randn((1, 1, shape_params_size)))
+
     def forward(self):
         return self.global_shape
 
@@ -166,7 +168,7 @@ def define_F(input_nc, output_nc, ngf, netG, norm='batch', use_dropout=False, in
 
 
 def define_G(input_nc, output_nc, ngf, netG, norm='batch', use_dropout=False, init_type='normal', init_gain=0.02,
-             gpu_ids=[],image_size = 256):
+             gpu_ids=[], image_size=256,up_sample_method='ConvTranspose2d'):
     """Create a generator
 
     Parameters:
@@ -205,7 +207,7 @@ def define_G(input_nc, output_nc, ngf, netG, norm='batch', use_dropout=False, in
     elif netG == 'unet_256':
         net = UnetGenerator(input_nc, output_nc, 8, ngf, norm_layer=norm_layer, use_dropout=use_dropout)
     elif netG == 'unet_256_stub_318':
-        net = UnetGeneratorWithStub(input_nc, output_nc, 8, ngf, norm_layer=norm_layer, use_dropout=use_dropout,image_size=image_size)
+        net = UnetGeneratorWithStub(input_nc, output_nc, 8, ngf, norm_layer=norm_layer, use_dropout=use_dropout, image_size=image_size,up_sample_method=up_sample_method)
 
 
     else:
@@ -498,10 +500,11 @@ class ResnetBlock(nn.Module):
         out = x + self.conv_block(x)  # add skip connections
         return out
 
+
 class UnetGeneratorWithStub(nn.Module):
     """Create a Unet-based generator"""
 
-    def __init__(self, input_nc, output_nc, num_downs, ngf=64, norm_layer=nn.BatchNorm2d, use_dropout=False,image_size = 256):
+    def __init__(self, input_nc, output_nc, num_downs, ngf=64, norm_layer=nn.BatchNorm2d, use_dropout=False, image_size=256,up_sample_method='ConvTranspose2d'):
         """Construct a Unet generator
         Parameters:
             input_nc (int)  -- the number of channels in input images
@@ -514,26 +517,27 @@ class UnetGeneratorWithStub(nn.Module):
         We construct the U-Net from the innermost layer to the outermost layer.
         It is a recursive process.
         """
-        params_to_add_to_regressor = image_size / 2**num_downs
+        params_to_add_to_regressor = image_size / 2 ** num_downs
         super(UnetGeneratorWithStub, self).__init__()
         # construct unet structure
         self.inner_unet_block = UnetSkipConnectionBlockStub(ngf * 8, ngf * 8, input_nc=None, submodule=None, norm_layer=norm_layer,
-                                             innermost=True,image_size_innermost=params_to_add_to_regressor)  # add the innermost layer
+                                                            innermost=True, image_size_innermost=params_to_add_to_regressor,up_sample_method=up_sample_method)  # add the innermost layer
         unet_block = self.inner_unet_block
         for i in range(num_downs - 5):  # add intermediate layers with ngf * 8 filters
             unet_block = UnetSkipConnectionBlockStub(ngf * 8, ngf * 8, input_nc=None, submodule=unet_block,
-                                                 norm_layer=norm_layer, use_dropout=use_dropout)
+                                                     norm_layer=norm_layer, use_dropout=use_dropout,up_sample_method=up_sample_method)
         # gradually reduce the number of filters from ngf * 8 to ngf
         unet_block = UnetSkipConnectionBlockStub(ngf * 4, ngf * 8, input_nc=None, submodule=unet_block,
-                                             norm_layer=norm_layer)
+                                                 norm_layer=norm_layer,up_sample_method=up_sample_method)
         unet_block = UnetSkipConnectionBlockStub(ngf * 2, ngf * 4, input_nc=None, submodule=unet_block,
-                                             norm_layer=norm_layer)
-        unet_block = UnetSkipConnectionBlockStub(ngf, ngf * 2, input_nc=None, submodule=unet_block, norm_layer=norm_layer)
+                                                 norm_layer=norm_layer,up_sample_method=up_sample_method)
+        unet_block = UnetSkipConnectionBlockStub(ngf, ngf * 2, input_nc=None, submodule=unet_block, norm_layer=norm_layer,up_sample_method=up_sample_method)
         self.model = UnetSkipConnectionBlockStub(output_nc, ngf, input_nc=input_nc, submodule=unet_block, outermost=True,
-                                             norm_layer=norm_layer)  # add the outermost layer
+                                                 norm_layer=norm_layer,up_sample_method=up_sample_method)  # add the outermost layer
 
     def forward(self, input):
         return self.model(input), self.inner_unet_block.flame_regressed_params
+
 
 class UnetGenerator(nn.Module):
     """Create a Unet-based generator"""
@@ -571,6 +575,7 @@ class UnetGenerator(nn.Module):
         """Standard forward"""
         return self.model(input)
 
+
 class UnetSkipConnectionBlockStub(nn.Module):
     """Defines the Unet submodule with skip connection.
         X -------------------identity----------------------
@@ -578,7 +583,7 @@ class UnetSkipConnectionBlockStub(nn.Module):
     """
 
     def __init__(self, outer_nc, inner_nc, input_nc=None,
-                 submodule=None, outermost=False, innermost=False, norm_layer=nn.BatchNorm2d, use_dropout=False,image_size_innermost=1,stub_nc = 118):
+                 submodule=None, outermost=False, innermost=False, norm_layer=nn.BatchNorm2d, use_dropout=False, image_size_innermost=1, stub_nc=118, up_sample_method='ConvTranspose2d'):
         """Construct a Unet submodule with skip connections.
 
         Parameters:
@@ -594,7 +599,7 @@ class UnetSkipConnectionBlockStub(nn.Module):
         super(UnetSkipConnectionBlockStub, self).__init__()
         self.outermost = outermost
         self.innermost = innermost
-
+        self.up_sample_method = up_sample_method
         if type(norm_layer) == functools.partial:
             use_bias = norm_layer.func == nn.InstanceNorm2d
         else:
@@ -609,16 +614,30 @@ class UnetSkipConnectionBlockStub(nn.Module):
         upnorm = norm_layer(outer_nc)
 
         if outermost:
+            up_samp = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+            upconv_samp = nn.Conv2d(inner_nc * 2, outer_nc,
+                                    kernel_size=3,
+
+                                    padding=1)
+
             upconv = nn.ConvTranspose2d(inner_nc * 2, outer_nc,
                                         kernel_size=4, stride=2,
                                         padding=1)
             down = [downconv]
-            up = [uprelu, upconv, nn.Tanh()]
+            if self.up_sample_method == 'ConvTranspose2d':
+                up = [uprelu, upconv, nn.Tanh()]
+            else:
+                up = [uprelu, up_samp, upconv_samp, nn.Tanh()]
             model = down + [submodule] + up
         elif innermost:
+            up_samp = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+            upconv_samp = nn.Conv2d(inner_nc, outer_nc,
+                                    kernel_size=3,
+                                    padding=1, bias=use_bias)
+
             upconv = nn.ConvTranspose2d(inner_nc, outer_nc,
-                                        kernel_size=4, stride=2,
-                                        padding=1, bias=use_bias)
+                                             kernel_size=4, stride=2,
+                                             padding=1, bias=use_bias)
             down = [downrelu, downconv]
             # flame_regression = [nn.Linear(inner_nc * int(image_size_innermost ** 2), 118)]
 
@@ -631,7 +650,7 @@ class UnetSkipConnectionBlockStub(nn.Module):
                 conv_list.append(nn.Conv2d(inner_nc, inner_nc, kernel_size=4, stride=2,
                                            padding=1))
                 conv_list.append(nn.LeakyReLU(0.2, True))
-                if i < iterations-1:
+                if i < iterations - 1:
                     conv_list.append(nn.BatchNorm2d(inner_nc))
             # conv_list.append(nn.Flatten(-1))
             for i in range(linear_iterations):
@@ -641,23 +660,36 @@ class UnetSkipConnectionBlockStub(nn.Module):
             conv_list.append(nn.Linear(inner_nc // 2 ** (i + 1), stub_nc))
             # conv_list.append(nn.Tanh())
 
-            self.model_flame_regression  = nn.ModuleList(conv_list)
+            self.model_flame_regression = nn.ModuleList(conv_list)
 
             # flame_regression = [nn.Linear(inner_nc * int(image_size_innermost ** 2), 118)]
 
-
             # self.model_flame_regression = nn.ModuleList([nn.Flatten(0, -1)] + flame_regression)
-            up = [uprelu, upconv, upnorm]
+            if self.up_sample_method == 'ConvTranspose2d':
+
+                up = [uprelu, upconv, upnorm]
+            else:
+                up = [uprelu, up_samp, upconv_samp, upnorm]
             # model = down + up
             self.model_down = nn.ModuleList(down)
-            self.model_up =  nn.ModuleList(up)
+            self.model_up = nn.ModuleList(up)
             return
         else:
+            up_samp = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+            upconv_samp = nn.Conv2d(inner_nc * 2, outer_nc,
+                                    kernel_size=3,
+
+                                    padding=1, bias=use_bias)
+
             upconv = nn.ConvTranspose2d(inner_nc * 2, outer_nc,
                                         kernel_size=4, stride=2,
                                         padding=1, bias=use_bias)
             down = [downrelu, downconv, downnorm]
-            up = [uprelu, upconv, upnorm]
+            if self.up_sample_method == 'ConvTranspose2d':
+
+                up = [uprelu, upconv, upnorm]
+            else:
+                up = [uprelu, up_samp, upconv_samp, upnorm]
 
             if use_dropout:
                 model = down + [submodule] + up + [nn.Dropout(0.5)]
@@ -665,6 +697,7 @@ class UnetSkipConnectionBlockStub(nn.Module):
                 model = down + [submodule] + up
 
         self.model = nn.ModuleList(model)
+
     def stub_torchsummary(self):
         conv_list = []
 
@@ -681,9 +714,9 @@ class UnetSkipConnectionBlockStub(nn.Module):
 
     def forward(self, x):
         if self.innermost:
-            l =  container(self.model_down, x)
+            l = container(self.model_down, x)
             y = torch.cat([x, container(self.model_up, l)], 1)
-            self.flame_regressed_params = container(self.model_flame_regression,l.view(l.shape[0],-1)).unsqueeze(0)
+            self.flame_regressed_params = container(self.model_flame_regression, l.view(l.shape[0], -1)).unsqueeze(0)
             return y
         # if self.innermost:
         #     y = torch.cat([x, container(self.model, x)], 1)
@@ -691,16 +724,19 @@ class UnetSkipConnectionBlockStub(nn.Module):
         #     return y
 
         if self.outermost:
-            y =   container(self.model,x)
+            y = container(self.model, x)
             return y
         else:  # add skip connections
-            y = torch.cat([x, container(self.model,x)], 1)
+            y = torch.cat([x, container(self.model, x)], 1)
             return y
 
-def container(model,input):
+
+def container(model, input):
     for module in model:
         input = module(input)
     return input
+
+
 class UnetSkipConnectionBlock(nn.Module):
     """Defines the Unet submodule with skip connection.
         X -------------------identity----------------------
@@ -850,12 +886,14 @@ class PixelDiscriminator(nn.Module):
     def forward(self, input):
         """Standard forward."""
         return self.net(input)
-def double_conv(in_channels, out_channels,kernel_size=3,stride=1,padding=1):
+
+
+def double_conv(in_channels, out_channels, kernel_size=3, stride=1, padding=1):
     return nn.Sequential(
-        nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, padding=padding,stride=stride),
-        nn.LeakyReLU(negative_slope=0.2,inplace=True),
-        nn.Conv2d(out_channels, out_channels, kernel_size=kernel_size, padding=padding,stride=stride),
-        nn.LeakyReLU(negative_slope=0.2,inplace=True)
+        nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, padding=padding, stride=stride),
+        nn.LeakyReLU(negative_slope=0.2, inplace=True),
+        nn.Conv2d(out_channels, out_channels, kernel_size=kernel_size, padding=padding, stride=stride),
+        nn.LeakyReLU(negative_slope=0.2, inplace=True)
     )
 
 
@@ -871,7 +909,7 @@ class Simple_UNet(nn.Module):
 
         self.maxpool = nn.MaxPool2d(2)
         self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-        self.linear = nn.Linear(512*32*32, 118)
+        self.linear = nn.Linear(512 * 32 * 32, 118)
 
         self.dconv_up3 = double_conv(256 + 512, 256)
         self.dconv_up2 = double_conv(128 + 256, 128)
@@ -909,4 +947,4 @@ class Simple_UNet(nn.Module):
         x = self.conv_last(x)
         out = self.tanh(x)
 
-        return out,y
+        return out, y
