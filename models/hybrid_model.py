@@ -90,6 +90,15 @@ class HybridModel(BaseModel):
             visual_ret = None
         return visual_ret
 
+    def update_camera_renderer_according_to_iphone(self, sample_data):
+        from pytorch3d.renderer import SfMPerspectiveCameras
+        device = 'cuda'
+        cam = SfMPerspectiveCameras(device=device, focal_length=sample_data['cam_params']['focal_length'],
+                                    principal_point=(sample_data['cam_params']['principal_point'][0]), R=sample_data['cam_params']['R'][0], T=sample_data['cam_params']['T'][0])
+        new_renderer = self.build.build_renderer(cam, sample_data['A'].shape[-1])
+
+        return new_renderer
+
     def __init__(self, opt):
         """Initialize the pix2pix class.
 
@@ -99,21 +108,21 @@ class HybridModel(BaseModel):
         BaseModel.__init__(self, opt)
         from Building.Builder import Builder
 
-        build = Builder(opt.face_torch_geo)
+        self.build = Builder(opt.face_torch_geo)
 
         config = SimpleNamespace(device=self.device, batch_size=self.opt.batch_size, flame_model_path='./smpl_model/flame2019/male_model.pkl', texture_data_path='./smpl_model/texture_data.npy')
 
         self.backgrounds_folder = f'resources/backgrounds'
         self.num_of_backgrounds = len(list(Path(self.backgrounds_folder).glob('*')))
         # self.flamelayer = FlameDecoder(config)
-        self.flamelayer = build.build_flamelayer()
+        self.flamelayer = self.build.build_flamelayer()
 
         self.verts_uvs1 = torch.tensor(self.flamelayer.texture_data['vt'], dtype=torch.float32).unsqueeze(0).cuda(
             self.device)
         self.faces_uvs1 = torch.tensor(self.flamelayer.texture_data['ft'].astype(np.int64), dtype=torch.int64).unsqueeze(0).cuda(
             self.device)
 
-        feature_extractor_manager = build.build_feature_extractor()
+        feature_extractor_manager = self.build.build_feature_extractor()
 
         # self.flamelayer.load_texture_data_from_resources(texture_data_path=config.texture_data_path)
         # self.flame_lmk_faces_idx, self.flame_lmk_bary_coords = self.flamelayer.load_dlib_static_landmarks_embeddings()
@@ -128,7 +137,7 @@ class HybridModel(BaseModel):
 
         # specify the training losses you want to print out. The training/test scripts will call <BaseModel.get_current_losses>
         # self.loss_names = ['G_GAN', 'G_L1', 'D_real', 'D_fake']
-        self.loss_names = ['G_GAN', 'G_L1', 'D_real', 'D_fake', 'D_texture', '3d_face_part_segmentation', '2d_face_part_segmentation', 'segmented_ears_colored_variance', '2d_landmarks',
+        self.loss_names = ['G_GAN', 'G_L1', 'D_real', 'D_fake', 'D_texture', '3d_face_part_segmentation', '2d_face_part_segmentation', 'segmented_ears_colored_variance',
                            'fake_texture_Reg']
         # specify the images you want to save/display. The training/test scripts will call <BaseModel.get_current_visuals>
         # self.visual_names = ['real_A', 'fake_Texture', 'fake_B', 'real_B','loss_G_L1_reducted']
@@ -187,8 +196,10 @@ class HybridModel(BaseModel):
             self.optimizers.append(self.optimizer_G)
             self.optimizers.append(self.optimizer_D)
             self.optimizers.append(self.optimizer_F)
-        self.face_torch_renderer = build.build_renderer()
 
+        # self.face_torch_renderer_test = self.build.build_renderer()
+
+        self.face_torch_renderer = self.update_camera_renderer_according_to_iphone(opt.data_sample)
         # self.init_differential_renderer()
         self.set_default_weights()
 
@@ -328,11 +339,14 @@ class HybridModel(BaseModel):
         img = transforms.ToPILImage()(UnNormalize(self.fake_B[self.verbose_batch_ind]).detach().cpu())
         r = 2
         for i in range(self.projected_fake_2d_landmarks[self.verbose_batch_ind].shape[0]):
-            x, y = self.projected_fake_2d_landmarks[self.verbose_batch_ind][i]
-            x_real, y_real = self.real_B_2d_landmarks[self.verbose_batch_ind][i]
-            draw = ImageDraw.Draw(img)
-            draw.ellipse((x - r, y - r, x + r, y + r), fill=(255, 0, 0, 0))
-            draw.ellipse((x_real - r, y_real - r, x_real + r, y_real + r), fill=(0, 0, 255, 0))
+            try:
+                x, y = self.projected_fake_2d_landmarks[self.verbose_batch_ind][i]
+                x_real, y_real = self.real_B_2d_landmarks[self.verbose_batch_ind][i]
+                draw = ImageDraw.Draw(img)
+                draw.ellipse((x - r, y - r, x + r, y + r), fill=(255, 0, 0, 0))
+                draw.ellipse((x_real - r, y_real - r, x_real + r, y_real + r), fill=(0, 0, 255, 0))
+            except:
+                pass
         self.landmarks_img = Normalize(transforms.ToTensor()(img)).unsqueeze(0)
         pass
 
@@ -361,7 +375,9 @@ class HybridModel(BaseModel):
         self.image_paths = input_data['A_paths' if AtoB else 'B_paths']
         self.current_batch_size = self.true_flame_params['shape_params'].shape[0]
         # print(f'self.current_batch_size  = {self.current_batch_size}' )
+        self.face_torch_renderer = self.update_camera_renderer_according_to_iphone(input_data)
 
+        # print(self.image_paths)
         self.create_true_mesh_from_initial_guess()
 
     def create_true_mesh_from_initial_guess(self):
@@ -377,7 +393,7 @@ class HybridModel(BaseModel):
 
         #
         from Rendering.mesh_making import make_mesh
-        self.true_mesh = make_mesh(self.true_vertices.squeeze(), self.flamelayer.faces,False, texture)
+        self.true_mesh = make_mesh(self.true_vertices.squeeze(), self.flamelayer.faces, False, texture)
 
         import os
         from pytorch3d.io import load_objs_as_meshes, save_obj
@@ -445,8 +461,8 @@ class HybridModel(BaseModel):
         self.eyball_pose = flame_param[..., ind:ind + self.eyball_pose_size]
         ind += self.eyball_pose_size
         vertices = self.flamelayer.forward_with_params(shape_params=self.shape_params.squeeze(1), expression_params=self.expression_params.squeeze(1),
-                                   pose_params=self.pose_params.squeeze(1), neck_pose=self.neck_pose.squeeze(1), transl=self.transl.squeeze(1),
-                                   eye_pose=self.eyball_pose.squeeze(1))
+                                                       pose_params=self.pose_params.squeeze(1), neck_pose=self.neck_pose.squeeze(1), transl=self.transl.squeeze(1),
+                                                       eye_pose=self.eyball_pose.squeeze(1))
         # vertices = self.flamelayer.forward_with_params(shape_params=self.true_flame_params['shape_params'].squeeze(1), expression_params=self.true_flame_params['expression_params'].squeeze(1),
         #                                      pose_params=torch.cat([self.true_flame_params['global_rot'].squeeze(1), self.true_flame_params['jaw_pose'].squeeze(1)], dim=1),
         #                                      neck_pose=self.true_flame_params['neck_pose_params'].squeeze(1),
@@ -476,6 +492,7 @@ class HybridModel(BaseModel):
         texture = Textures(self.estimated_texture_map, faces_uvs=self.faces_uvs1.repeat(self.current_batch_size, 1, 1), verts_uvs=self.verts_uvs1.repeat(self.current_batch_size, 1, 1))
 
         self.vertices = vertices
+        from Rendering.mesh_making import make_mesh
         self.estimated_mesh = make_mesh(vertices, self.flamelayer.faces, False, texture)  # TODO
         # import os
 
@@ -486,9 +503,9 @@ class HybridModel(BaseModel):
         #          verts_uvs=self.estimated_mesh.textures.verts_uvs_packed(), texture_map=self.estimated_texture_map,
         #          faces_uvs=self.estimated_mesh.textures.faces_uvs_packed())
 
-        images = self.renderer(self.estimated_mesh, materials=self.materials)
-        silhouette_images = self.silhouette_renderer(self.estimated_mesh, materials=self.materials)[..., 3, None]
-        negative_silhouette_images = self.negative_silhouette_renderer(self.estimated_mesh, materials=self.materials)[..., 3, None]
+        images = self.face_torch_renderer._textured_soft_phong_renderer(self.estimated_mesh)
+        silhouette_images = self.face_torch_renderer._silhouette_renderer(self.estimated_mesh)[..., 3, None]
+        negative_silhouette_images = self.face_torch_renderer.negative_silhouette_renderer(self.estimated_mesh)[..., 3, None]
         if self.opt.verbose:
             transforms.ToPILImage()(silhouette_images[self.verbose_batch_ind].squeeze().permute(0, 1).cpu()).save('out/silhouette.png')
             # transforms.ToPILImage()(images.squeeze().permute(2, 0, 1).cpu()).save('out/img.png')
@@ -501,15 +518,15 @@ class HybridModel(BaseModel):
         silhouette_images = silhouette_images.clamp(0, 1)
 
         # if batch size is changing as total number of samples won't divide by batch size precisely we need to update the renderer segmentation map size
-        self.segmentation_3d_renderer.shader.colormap = self.segmentation_texture_map.repeat(self.current_batch_size, 1, 1, 1)
-        self.weights_3d_renderer.shader.colormap = self.weights_texture_map.repeat(self.current_batch_size, 1, 1, 1)
+        self.face_torch_renderer._segmentation_3d_renderer.shader.colormap = self.face_torch_renderer.segmentation_texture_map.repeat(self.current_batch_size, 1, 1, 1)
+        # self.weights_3d_renderer.shader.colormap = self.weights_texture_map.repeat(self.current_batch_size, 1, 1, 1)
 
-        segmented_3d_model_image = self.segmentation_3d_renderer(self.estimated_mesh)[..., 0, None].permute(0, 3, 1, 2).repeat(1, 3, 1, 1)
+        segmented_3d_model_image = self.face_torch_renderer._segmentation_3d_renderer(self.estimated_mesh)[..., 0, None].permute(0, 3, 1, 2).repeat(1, 3, 1, 1)
 
-        weights_3d_renderer_image = self.weights_3d_renderer(self.estimated_mesh)[..., 0, None].permute(0, 3, 1, 2).repeat(1, 3, 1, 1)
+        # weights_3d_renderer_image = self.weights_3d_renderer(self.estimated_mesh)[..., 0, None].permute(0, 3, 1, 2).repeat(1, 3, 1, 1)
         # cv2.imwrite('out/s.png', segmented_3d_model_image.squeeze().permute(1, 2, 0).cpu().detach().numpy())
 
-        return images[..., :3].permute(0, 3, 1, 2), silhouette_images, cull_backfaces_mask, segmented_3d_model_image, weights_3d_renderer_image  # [..., :3].permute(0, 3, 1, 2)
+        return images[..., :3].permute(0, 3, 1, 2), silhouette_images, cull_backfaces_mask, segmented_3d_model_image, None  # weights_3d_renderer_image  # [..., :3].permute(0, 3, 1, 2)
 
     def forward(self):
         """Run forward pass; called by both functions <optimize_parameters> and <test>."""
@@ -555,17 +572,19 @@ class HybridModel(BaseModel):
 
             zero_out_estimated_geomtery = False
             self.fake_geo_from_flame = self.create_geo_from_flame_params(self.fake_flame.permute(1, 0, 2) / 100, base_flame_params=self.true_flame_params, use_fix_params=zero_out_estimated_geomtery)
-            from smplx.lbs import  vertices2landmarks
+            from smplx.lbs import vertices2landmarks
             landmarks_static_3d = vertices2landmarks(self.fake_geo_from_flame,
                                                      torch.from_numpy(self.flamelayer.faces).cuda(),
-                                                     self.flamelayer.lmk_faces_idx,
-                                                     self.flamelayer.lmk_bary_coords.unsqueeze(0))
+                                                     self.flamelayer.lmk_faces_idx.repeat(self.current_batch_size, 1),
+                                                     self.flamelayer.lmk_bary_coords.repeat(self.current_batch_size, 1, 1))
             # landmarks_static_3d = self.flamelayer.get_static_dlib_3D_landmarks(self.fake_geo_from_flame, self.flame_lmk_faces_idx.repeat(self.current_batch_size, 1),
             #                                                                    self.flame_lmk_bary_coords.repeat(self.current_batch_size, 1, 1))
-
+            # self.init_differential_renderer()
             # self.projected_fake_2d_landmarks = self.points_renderer.transform_points(landmarks_static_3d)
-            self.projected_fake_2d_landmarks = self.face_torch_renderer.transform_points(landmarks_static_3d.squeeze())
 
+            # self.projected_fake_2d_landmarks = self.face_torch_renderer.transform_points(landmarks_static_3d)
+            points_2D_cam = self.face_torch_renderer._cameras.transform_points(landmarks_static_3d)
+            self.projected_fake_2d_landmarks = self.face_torch_renderer._coord_transformer.cam2screen(points_2D_cam, is_tensor=True)
             self.fake_B, self.fake_B_silhouette, self.cull_backfaces_mask, self.segmented_3d_model_image, self.weights_3d_model_image = self.project_to_image_plane(self.fake_geo_from_flame,
                                                                                                                                                                     UnNormalize(self.fake_Texture),
                                                                                                                                                                     self.opt.constant_data)
@@ -699,16 +718,16 @@ class HybridModel(BaseModel):
 
         self.loss_2d_face_part_segmentation = self.loss_2d_face_part_segmentation_de.sum() * self.opt.lambda_face_seg
 
-        self.loss_2d_landmarks = self.criterionL2(self.projected_fake_2d_landmarks[self.A_2d_landmarks_found], self.real_B_2d_landmarks[self.A_2d_landmarks_found]).mean() * self.opt.lambda_landmarks
+        # self.loss_2d_landmarks = self.criterionL2(self.projected_fake_2d_landmarks[self.A_2d_landmarks_found], self.real_B_2d_landmarks[self.A_2d_landmarks_found]).mean() * self.opt.lambda_landmarks
         # combine loss and calculate gradients
         self.loss_G = self.loss_G_GAN + \
                       self.loss_G_L1 + \
                       self.loss_F_Reg + \
-                      self.loss_2d_landmarks + \
                       self.loss_3d_face_part_segmentation + \
                       self.loss_segmented_ears_colored_variance + \
                       self.loss_fake_texture_Reg + \
                       self.loss_2d_face_part_segmentation
+        # self.loss_2d_landmarks + \
 
         if self.opt.verbose:
             transforms.ToPILImage()(self.loss_3d_face_part_segmentation_de[self.verbose_batch_ind].cpu().squeeze()).save('out/loss_3d_face_part_segmentation.png')
@@ -756,12 +775,12 @@ class HybridModel(BaseModel):
         img = tt(real_un)
 
         # with torch.no_grad():
-        out = self.face_parts_segmentation(img)
+        out = self.face_parts_segmentation.face_parts_segmentation(img)
 
         if self.opt.verbose:
             parsing = out[self.verbose_batch_ind].detach().cpu().numpy().argmax(0)
             image = transforms.ToPILImage()(UnNormalize(input_img[self.verbose_batch_ind]).squeeze().detach().cpu()).resize((512, 512), Image.BILINEAR)
-            self.face_parts_segmentation.vis_parsing_maps(image, parsing, stride=1, save_im=True, save_path=f'out/{fname}.png')
+            self.face_parts_segmentation.face_parts_segmentation.display(image, parsing, stride=1, save_im=True, save_path=f'out/{fname}.png')
         out = F.interpolate(out, (self.opt.crop_size, self.opt.crop_size))
         argmax_tensor = torch.argmax(out, dim=1)
 

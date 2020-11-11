@@ -70,7 +70,7 @@ if __name__ == '__main__':
 
 
     opt = propagate_factorch_config(opt)
-
+    opt.data_sample = next(iter(dataset))
     model = create_model(opt)  # create a model given opt.model and other options
     model.setup(opt)  # regular setup: load and print networks; create schedulers
     if opt.tensorboard_visualizer:

@@ -103,7 +103,7 @@ for sp in splits:
                 im_A = cv2.imread(path_A, 1)  # python2: cv2.CV_LOAD_IMAGE_COLOR; python3: cv2.IMREAD_COLOR
                 im_B = cv2.imread(path_B, 1)  # python2: cv2.CV_LOAD_IMAGE_COLOR; python3: cv2.IMREAD_COLOR
                 im_C = cv2.imread(path_C, 1)  # python2: cv2.CV_LOAD_IMAGE_COLOR; python3: cv2.IMREAD_COLOR
-                default_size = 512
+                default_size = 256
                 im_A = cv2.resize(im_A, (default_size, default_size))
                 im_B = cv2.resize(im_B, (default_size, default_size))
                 im_C = cv2.resize(im_C, (default_size, default_size))

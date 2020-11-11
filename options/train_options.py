@@ -7,7 +7,7 @@ class TrainOptions(BaseOptions):
     It also includes shared options defined in BaseOptions.
     """
     def initialize(self, parser):
-        display_freq = 200
+        display_freq = 50
 
         parser = BaseOptions.initialize(self, parser)
         # visdom and HTML visualization parameters

@@ -6,7 +6,7 @@ import shutil
 
 def get_all_samples_from_cg_ds(ds_path):
     paths = sorted(Path(ds_path).rglob("features"))
-    return paths[2:10]
+    return paths
 
 
 # TODO bind volume of dataset to /opt/data in settings
