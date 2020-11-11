@@ -9,11 +9,30 @@ from pathlib import Path
 import glob
 
 
+def load_flame_params(flame_path):
+    with open(flame_path, 'rb') as f:
+        flame_params = pickle.load(f, encoding='latin1')
+        if not isinstance(flame_params, Dict):
+            flame_params_dict = {}
+            flame_params_dict['global_rot'] = flame_params[0]
+            flame_params_dict['transl'] = flame_params[1]
+            flame_params_dict['shape_params'] = flame_params[2]
+            flame_params_dict['expression_params'] = flame_params[3]
+            flame_params_dict['jaw_pose'] = flame_params[4]
+            flame_params_dict['neck_pose'] = flame_params[5]
+            flame_params = flame_params_dict
+    return flame_params
+
+
+from typing import Dict
+
+
 def image_write(path_A, path_B, path_ABC):
     im_A = cv2.imread(path_A, 1)  # python2: cv2.CV_LOAD_IMAGE_COLOR; python3: cv2.IMREAD_COLOR
     im_B = cv2.imread(path_B, 1)  # python2: cv2.CV_LOAD_IMAGE_COLOR; python3: cv2.IMREAD_COLOR
     im_AB = np.concatenate([im_A, im_B], 1)
     cv2.imwrite(path_ABC, im_AB)
+
 
 # --fold_A
 # /home/user3/repos/pytorch-CycleGAN-and-pix2pix/datasets/before_combine/DVP_RANNI/A
@@ -24,7 +43,7 @@ def image_write(path_A, path_B, path_ABC):
 # --fold_ABC
 # /home/user3/repos/pytorch-CycleGAN-and-pix2pix/datasets/DVP_RANNI
 # --no_multiprocessing
-dataset = 'DVP_RANNI'
+dataset = 'Iphone_new_demo'
 parser = argparse.ArgumentParser('create image pairs')
 parser.add_argument('--fold_A', dest='fold_A', help='input directory for image A', type=str,
                     default=f'/home/user3/repos/pytorch-CycleGAN-and-pix2pix/datasets/before_combine/{dataset}/A')
@@ -84,13 +103,23 @@ for sp in splits:
                 im_A = cv2.imread(path_A, 1)  # python2: cv2.CV_LOAD_IMAGE_COLOR; python3: cv2.IMREAD_COLOR
                 im_B = cv2.imread(path_B, 1)  # python2: cv2.CV_LOAD_IMAGE_COLOR; python3: cv2.IMREAD_COLOR
                 im_C = cv2.imread(path_C, 1)  # python2: cv2.CV_LOAD_IMAGE_COLOR; python3: cv2.IMREAD_COLOR
+                default_size = 512
+                im_A = cv2.resize(im_A, (default_size, default_size))
+                im_B = cv2.resize(im_B, (default_size, default_size))
+                im_C = cv2.resize(im_C, (default_size, default_size))
+
+                if im_A.shape[0] != im_C.shape[0]:
+                    im_C = cv2.resize(im_C, (im_A.shape[0], im_A.shape[1]))
                 im_ABC = np.concatenate([im_A, im_B, im_C], 1)
                 # im_ABC = np.concatenate([im_A, im_C], 1)
                 cv2.imwrite(path_ABC, im_ABC)
                 if args.use_metadata:
                     im_sil = cv2.imread(str(Path(path_C).parent / f'{Path(path_C).stem}_rendered_silhouette.jpg'))
-                    with open(str(Path(path_C).parent / f'{Path(path_C).stem}_flame_params.pkl'), 'rb') as f:
-                        flame_params = pickle.load(f, encoding='latin1')
+                    with open(str(Path(path_C).parent / f'{Path(path_C).stem}_cam_params.npy'), 'rb') as f:
+                        cam_params = np.load(f, encoding='latin1').item()
+                    flame_path = str(Path(path_C).parent / f'{Path(path_C).stem}_flame_params.pkl')
+                    flame_params = load_flame_params(flame_path)
+
                     with open(str(Path(path_C).parent / f'{Path(path_C).stem}_normals_map.pkl'), 'rb') as f:
                         normals_map = pickle.load(f, encoding='latin1')['normals_map']
                     with open(str(Path(path_C).parent / f'{Path(path_C).stem}_correspondence_map.pkl'), 'rb') as f:
@@ -98,7 +127,8 @@ for sp in splits:
                     metadata = {'true_flame_params': flame_params,
                                 'rendered_silh': im_sil,
                                 'correspondence_map': correspondence_map,
-                                'normals_map':normals_map,
+                                'normals_map': normals_map,
+                                'cam_params': cam_params,
                                 }
                     outpath = Path(path_ABC).parent / (Path(path_ABC).stem + '.pkl')
                     with open(outpath, 'wb') as outfile:

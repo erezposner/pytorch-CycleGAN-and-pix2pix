@@ -23,7 +23,7 @@ from Gavros.Utils.pytorch3DUtils.renderer import Renderer
 from PIL import ImageDraw
 from Gavros.Utils.pytorch3DUtils.renderer import Renderer
 
-from .mesh_making import make_mesh
+# from .mesh_making import make_mesh
 import pickle
 import cv2
 
@@ -97,25 +97,39 @@ class HybridModel(BaseModel):
             opt (Option class)-- stores all the experiment flags; needs to be a subclass of BaseOptions
         """
         BaseModel.__init__(self, opt)
+        from Building.Builder import Builder
+
+        build = Builder(opt.face_torch_geo)
+
         config = SimpleNamespace(device=self.device, batch_size=self.opt.batch_size, flame_model_path='./smpl_model/flame2019/male_model.pkl', texture_data_path='./smpl_model/texture_data.npy')
 
         self.backgrounds_folder = f'resources/backgrounds'
         self.num_of_backgrounds = len(list(Path(self.backgrounds_folder).glob('*')))
-        self.flamelayer = FlameDecoder(config)
-        self.flamelayer.load_texture_data_from_resources(texture_data_path=config.texture_data_path)
-        self.flame_lmk_faces_idx, self.flame_lmk_bary_coords = self.flamelayer.load_dlib_static_landmarks_embeddings()
-        self.flame_lmk_bary_coords = self.flame_lmk_bary_coords.to(self.device)
-        self.flame_lmk_faces_idx = self.flame_lmk_faces_idx.to(self.device)
+        # self.flamelayer = FlameDecoder(config)
+        self.flamelayer = build.build_flamelayer()
+
+        self.verts_uvs1 = torch.tensor(self.flamelayer.texture_data['vt'], dtype=torch.float32).unsqueeze(0).cuda(
+            self.device)
+        self.faces_uvs1 = torch.tensor(self.flamelayer.texture_data['ft'].astype(np.int64), dtype=torch.int64).unsqueeze(0).cuda(
+            self.device)
+
+        feature_extractor_manager = build.build_feature_extractor()
+
+        # self.flamelayer.load_texture_data_from_resources(texture_data_path=config.texture_data_path)
+        # self.flame_lmk_faces_idx, self.flame_lmk_bary_coords = self.flamelayer.load_dlib_static_landmarks_embeddings()
+        # self.flame_lmk_bary_coords = self.flame_lmk_bary_coords.to(self.device)
+        # self.flame_lmk_faces_idx = self.flame_lmk_faces_idx.to(self.device)
 
         self.flamelayer.to(self.device)
 
         # config.use_3D_translation = True  # could be removed, depending on the camera model
         # config.use_face_contour = False
-        self.face_parts_segmentation = FacePartSegmentation(self.device)
+        self.face_parts_segmentation = feature_extractor_manager.image_feature_extractors['FacialPartsSegmentationFE']
 
         # specify the training losses you want to print out. The training/test scripts will call <BaseModel.get_current_losses>
         # self.loss_names = ['G_GAN', 'G_L1', 'D_real', 'D_fake']
-        self.loss_names = ['G_GAN', 'G_L1', 'D_real', 'D_fake','D_texture', '3d_face_part_segmentation', '2d_face_part_segmentation', 'segmented_ears_colored_variance', '2d_landmarks', 'fake_texture_Reg']
+        self.loss_names = ['G_GAN', 'G_L1', 'D_real', 'D_fake', 'D_texture', '3d_face_part_segmentation', '2d_face_part_segmentation', 'segmented_ears_colored_variance', '2d_landmarks',
+                           'fake_texture_Reg']
         # specify the images you want to save/display. The training/test scripts will call <BaseModel.get_current_visuals>
         # self.visual_names = ['real_A', 'fake_Texture', 'fake_B', 'real_B','loss_G_L1_reducted']
         self.visual_names = ['real_A', 'warped_input_texture_map', 'fake_Texture', 'yam_rendered_img', 'fake_B', 'real_B', 'loss_3d_face_part_segmentation_de', 'landmarks_img',
@@ -173,8 +187,9 @@ class HybridModel(BaseModel):
             self.optimizers.append(self.optimizer_G)
             self.optimizers.append(self.optimizer_D)
             self.optimizers.append(self.optimizer_F)
+        self.face_torch_renderer = build.build_renderer()
 
-        self.init_differential_renderer()
+        # self.init_differential_renderer()
         self.set_default_weights()
 
     def init_differential_renderer(self):
@@ -351,21 +366,26 @@ class HybridModel(BaseModel):
 
     def create_true_mesh_from_initial_guess(self):
 
-        self.true_vertices = self.flamelayer(shape_params=self.true_flame_params['shape_params'].squeeze(1), expression_params=self.true_flame_params['expression_params'].squeeze(1),
-                                             pose_params=torch.cat([self.true_flame_params['global_rot'].squeeze(1), self.true_flame_params['jaw_pose'].squeeze(1)], dim=1),
-                                             neck_pose=self.true_flame_params['neck_pose_params'].squeeze(1),
-                                             transl=self.true_flame_params['transl'].squeeze(1),
-                                             eye_pose=torch.zeros((self.current_batch_size, self.eyball_pose_size)).cuda())
+        self.true_vertices = self.flamelayer.forward_with_params(shape_params=self.true_flame_params['shape_params'].squeeze(1),
+                                                                 expression_params=self.true_flame_params['expression_params'].squeeze(1),
+                                                                 pose_params=torch.cat([self.true_flame_params['global_rot'].squeeze(1), self.true_flame_params['jaw_pose'].squeeze(1)], dim=1),
+                                                                 neck_pose=self.true_flame_params['neck_pose'].squeeze(1),
+                                                                 transl=self.true_flame_params['transl'].squeeze(1),
+                                                                 eye_pose=torch.zeros((self.current_batch_size, self.eyball_pose_size)).cuda())
         texture_map = UnNormalize(self.real_A).permute(0, 2, 3, 1)
         texture = Textures(texture_map, faces_uvs=self.faces_uvs1.repeat(self.current_batch_size, 1, 1), verts_uvs=self.verts_uvs1.repeat(self.current_batch_size, 1, 1))
 
         #
-        self.true_mesh = make_mesh(self.true_vertices, self.flamelayer.faces, False, texture)
-        # final_obj = os.path.join('out/', 'final_model.obj')
-        #
-        # save_obj(final_obj, self.true_mesh.verts_packed(), torch.from_numpy(self.flamelayer.faces.astype(np.int32)),
-        #          verts_uvs=self.true_mesh.textures.verts_uvs_packed(), texture_map=texture_map,
-        #          faces_uvs=self.true_mesh.textures.faces_uvs_packed())
+        from Rendering.mesh_making import make_mesh
+        self.true_mesh = make_mesh(self.true_vertices.squeeze(), self.flamelayer.faces,False, texture)
+
+        import os
+        from pytorch3d.io import load_objs_as_meshes, save_obj
+        final_obj = os.path.join('out/t', 'final_model.obj')
+
+        save_obj(final_obj, self.true_mesh.verts_packed(), torch.from_numpy(self.flamelayer.faces.astype(np.int32)),
+                 verts_uvs=self.true_mesh.textures.verts_uvs_packed(), texture_map=texture_map,
+                 faces_uvs=self.true_mesh.textures.faces_uvs_packed())
 
     def create_geo_from_flame_params(self, flame_param, base_flame_params=None, use_fix_params=False):
         # scale = 0.0001
@@ -376,7 +396,7 @@ class HybridModel(BaseModel):
             base_flame_params = defaultDict()
             base_flame_params['shape_params'] = torch.zeros((self.current_batch_size, 1, self.shape_params_size)).cuda()
             base_flame_params['expression_params'] = torch.zeros((self.current_batch_size, 1, self.expression_params_size)).cuda()
-            base_flame_params['neck_pose_params'] = torch.zeros((self.current_batch_size, 1, self.neck_pose_params_size)).cuda()
+            base_flame_params['neck_pose'] = torch.zeros((self.current_batch_size, 1, self.neck_pose_params_size)).cuda()
             base_flame_params['jaw_pose'] = torch.zeros((self.current_batch_size, 1, self.jaw_pose_size)).cuda()
             base_flame_params['global_rot'] = torch.zeros((self.current_batch_size, 1, self.global_rot_size)).cuda()
             base_flame_params['transl'] = torch.zeros((self.current_batch_size, 1, self.transl_size)).cuda()
@@ -403,7 +423,7 @@ class HybridModel(BaseModel):
         ind += self.expression_params_size
         # if use_fix_params:
         # flame_param[:, ind:ind + neck_pose_params_size] = data['neck_pose_params']
-        self.neck_pose = flame_param[..., ind:ind + self.neck_pose_params_size] + base_flame_params['neck_pose_params']
+        self.neck_pose = flame_param[..., ind:ind + self.neck_pose_params_size] + base_flame_params['neck_pose']
         ind += self.neck_pose_params_size
         # if use_fix_params:
         #     flame_param[:, ind:ind + jaw_pose_size] = data['jaw_pose']
@@ -424,10 +444,10 @@ class HybridModel(BaseModel):
         ind += self.transl_size
         self.eyball_pose = flame_param[..., ind:ind + self.eyball_pose_size]
         ind += self.eyball_pose_size
-        vertices = self.flamelayer(shape_params=self.shape_params.squeeze(1), expression_params=self.expression_params.squeeze(1),
+        vertices = self.flamelayer.forward_with_params(shape_params=self.shape_params.squeeze(1), expression_params=self.expression_params.squeeze(1),
                                    pose_params=self.pose_params.squeeze(1), neck_pose=self.neck_pose.squeeze(1), transl=self.transl.squeeze(1),
                                    eye_pose=self.eyball_pose.squeeze(1))
-        # vertices = self.flamelayer(shape_params=self.true_flame_params['shape_params'].squeeze(1), expression_params=self.true_flame_params['expression_params'].squeeze(1),
+        # vertices = self.flamelayer.forward_with_params(shape_params=self.true_flame_params['shape_params'].squeeze(1), expression_params=self.true_flame_params['expression_params'].squeeze(1),
         #                                      pose_params=torch.cat([self.true_flame_params['global_rot'].squeeze(1), self.true_flame_params['jaw_pose'].squeeze(1)], dim=1),
         #                                      neck_pose=self.true_flame_params['neck_pose_params'].squeeze(1),
         #                                      transl=self.true_flame_params['transl'].squeeze(1),
@@ -535,11 +555,16 @@ class HybridModel(BaseModel):
 
             zero_out_estimated_geomtery = False
             self.fake_geo_from_flame = self.create_geo_from_flame_params(self.fake_flame.permute(1, 0, 2) / 100, base_flame_params=self.true_flame_params, use_fix_params=zero_out_estimated_geomtery)
+            from smplx.lbs import  vertices2landmarks
+            landmarks_static_3d = vertices2landmarks(self.fake_geo_from_flame,
+                                                     torch.from_numpy(self.flamelayer.faces).cuda(),
+                                                     self.flamelayer.lmk_faces_idx,
+                                                     self.flamelayer.lmk_bary_coords.unsqueeze(0))
+            # landmarks_static_3d = self.flamelayer.get_static_dlib_3D_landmarks(self.fake_geo_from_flame, self.flame_lmk_faces_idx.repeat(self.current_batch_size, 1),
+            #                                                                    self.flame_lmk_bary_coords.repeat(self.current_batch_size, 1, 1))
 
-            landmarks_static_3d = self.flamelayer.get_static_dlib_3D_landmarks(self.fake_geo_from_flame, self.flame_lmk_faces_idx.repeat(self.current_batch_size, 1),
-                                                                               self.flame_lmk_bary_coords.repeat(self.current_batch_size, 1, 1))
-
-            self.projected_fake_2d_landmarks = self.points_renderer.transform_points(landmarks_static_3d)
+            # self.projected_fake_2d_landmarks = self.points_renderer.transform_points(landmarks_static_3d)
+            self.projected_fake_2d_landmarks = self.face_torch_renderer.transform_points(landmarks_static_3d.squeeze())
 
             self.fake_B, self.fake_B_silhouette, self.cull_backfaces_mask, self.segmented_3d_model_image, self.weights_3d_model_image = self.project_to_image_plane(self.fake_geo_from_flame,
                                                                                                                                                                     UnNormalize(self.fake_Texture),

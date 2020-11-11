@@ -31,11 +31,11 @@ with open(str(data_path / 'flame_params.pkl'), 'rb') as file:
 
     global_rot = fake_flame['global_rot']
     jaw_pose = fake_flame['jaw_pose']
-    neck_pose = fake_flame['neck_pose_params']
+    neck_pose = fake_flame['neck_pose']
     transl = fake_flame['transl']
     pose_params = torch.cat([global_rot, jaw_pose], dim=1)
     eyball_pose = fake_flame['eye_pose']
-vertices = flamelayer(shape_params=shape_params, expression_params=expression_params,
+vertices = flamelayer.forward_with_params(shape_params=shape_params, expression_params=expression_params,
                       pose_params=pose_params, neck_pose=neck_pose, transl=transl,
                       eye_pose=eyball_pose)
 

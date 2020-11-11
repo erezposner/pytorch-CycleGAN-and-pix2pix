@@ -100,7 +100,7 @@ class CGAlignedDataset(BaseDataset):
         # C_transform = get_transform(self.opt, transform_params, grayscale=(self.output_nc == 1))
         # from torchvision import transforms
         # transforms.ToPILImage()(A.cpu()).save('a.png')
-        A_2d_landmarks ,A_2d_landmarks_found= self.extract_dlib_landmarks(A)
+        A_2d_landmarks, A_2d_landmarks_found = self.extract_dlib_landmarks(A)
 
         A = A_transform(A)
         B = B_transform(B)
@@ -113,8 +113,9 @@ class CGAlignedDataset(BaseDataset):
         normals_map_im = meta_transform(normals_map_im)
         # return {'A': A, 'B': B,'C': C, 'A_paths': AB_path, 'B_paths': AB_path, 'C_paths': AB_path}
         return {'yam_rendered_img': yam_rendered_img, 'A': A, 'B': B, 'A_paths': AB_path, 'B_paths': AB_path, 'true_flame_params': metadata['true_flame_params'],
+                'cam_params': metadata['cam_params'],
                 'silh': silh_im, 'true_mask': true_mask, 'normals_map_im': normals_map_im, 'correspondence_map_im': correspondence_map_im,
-                'captured_2d_landmarks': A_2d_landmarks,'A_2d_landmarks_found':A_2d_landmarks_found}
+                'captured_2d_landmarks': A_2d_landmarks, 'A_2d_landmarks_found': A_2d_landmarks_found}
 
     def extract_dlib_landmarks(self, image):
         # image = Image.open(self.image_paths[0])
@@ -123,7 +124,7 @@ class CGAlignedDataset(BaseDataset):
         try:
             target_2d_lmks = self.landmark_extractor(image=image)
         except:
-            return -1 * torch.ones(51, 2).float(),False
+            return -1 * torch.ones(51, 2).float(), False
         if self.verbose:
             import cv2
             for (x, y) in target_2d_lmks:
@@ -132,7 +133,7 @@ class CGAlignedDataset(BaseDataset):
         target_2d_lmks = torch.from_numpy(target_2d_lmks).float()
         target_2d_lmks = target_2d_lmks / (512 / self.opt.crop_size)
 
-        return target_2d_lmks[17:, ...],True  # remove dynamic landmarks
+        return target_2d_lmks[17:, ...], True  # remove dynamic landmarks
 
     def __len__(self):
         """Return the total number of images in the dataset."""

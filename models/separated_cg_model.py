@@ -265,7 +265,7 @@ class separatedcgmodel(BaseModel):
             base_flame_params = {}
             base_flame_params['shape_params'] = torch.zeros((1, 1, self.shape_params_size)).cuda()
             base_flame_params['expression_params'] = torch.zeros((1, 1, self.expression_params_size)).cuda()
-            base_flame_params['neck_pose_params'] = torch.zeros((1, 1, self.neck_pose_params_size)).cuda()
+            base_flame_params['neck_pose'] = torch.zeros((1, 1, self.neck_pose_params_size)).cuda()
             base_flame_params['jaw_pose'] = torch.zeros((1, 1, self.jaw_pose_size)).cuda()
             base_flame_params['global_rot'] = torch.zeros((1, 1, self.global_rot_size)).cuda()
             base_flame_params['transl'] = torch.zeros((1, 1, self.transl_size)).cuda()
@@ -287,8 +287,8 @@ class separatedcgmodel(BaseModel):
         # self.expression_params =  base_flame_params['expression_params'][0]
         ind += self.expression_params_size
         # if use_fix_params:
-        # flame_param[:, ind:ind + neck_pose_params_size] = data['neck_pose_params']
-        self.neck_pose = flame_param[:, ind:ind + self.neck_pose_params_size] + base_flame_params['neck_pose_params'][0]
+        # flame_param[:, ind:ind + neck_pose_params_size] = data['neck_pose']
+        self.neck_pose = flame_param[:, ind:ind + self.neck_pose_params_size] + base_flame_params['neck_pose'][0]
         ind += self.neck_pose_params_size
         # if use_fix_params:
         #     flame_param[:, ind:ind + jaw_pose_size] = data['jaw_pose']
@@ -311,7 +311,7 @@ class separatedcgmodel(BaseModel):
         ind += self.transl_size
         self.eyball_pose = flame_param[:, ind:ind + self.eyball_pose_size]
         ind += self.eyball_pose_size
-        vertices = self.flamelayer(shape_params=self.shape_params[0], expression_params=self.expression_params,
+        vertices = flamelayer.forward_with_params(shape_params=self.shape_params[0], expression_params=self.expression_params,
                                    pose_params=self.pose_params, neck_pose=self.neck_pose, transl=self.transl,
                                    eye_pose=self.eyball_pose)
         return vertices

@@ -6,7 +6,7 @@ import shutil
 
 def get_all_samples_from_cg_ds(ds_path):
     paths = sorted(Path(ds_path).rglob("features"))
-    return paths
+    return paths[2:10]
 
 
 # TODO bind volume of dataset to /opt/data in settings
@@ -14,10 +14,11 @@ def get_all_samples_from_cg_ds(ds_path):
 # dataset_path = Path('/opt/data/Subject 1')
 dataset_path = Path('/opt/data/master_reconstruction')
 dataset_path = Path('/opt/qnap/Rani/output/Ranni4_lmks51_tolerance01')
+dataset_path = Path('/input/DGX_exp/Iphone_testing/new_demo/uuid')
 # samples = glob.glob(str(dataset_path / '*'))
 samples = get_all_samples_from_cg_ds(dataset_path)
 print(f'{len(samples)} were found. Starting copying...')
-dataset_output_path = Path('./datasets/before_combine/DVP_RANNI')
+dataset_output_path = Path('./datasets/before_combine/Iphone_new_demo')
 import numpy as np
 
 modes = ['train', 'test', 'val']
@@ -29,6 +30,7 @@ for mode in modes:
     output_B_folder.mkdir(parents=True, exist_ok=True)
     output_C_folder.mkdir(parents=True, exist_ok=True)
 for ind, sample in enumerate(samples):
+    print(sample)
     # mode = modes[np.random.randint(0, 3)]
     sampled_mode_index = np.random.choice(a=[0, 1, 2], p=[0.7, 0.15, 0.15])
     mode = modes[sampled_mode_index]
@@ -42,6 +44,7 @@ for ind, sample in enumerate(samples):
     shutil.copy(str(Path(sample) / 'normals_map.p'), str(Path(output_C_folder) / (f'{ind:04d}' + '_normals_map.pkl')))
     shutil.copy(str(Path(sample) / 'correspondence_map.p'), str(Path(output_C_folder) / (f'{ind:04d}' + '_correspondence_map.pkl')))
     shutil.copy(str(Path(sample) / 'rendered_silhouette.jpg'), str(Path(output_C_folder) / (f'{ind:04d}' + '_rendered_silhouette.jpg')))
+    shutil.copy(str(Path(sample) / 'cam_params.npy'), str(Path(output_C_folder) / (f'{ind:04d}' + '_cam_params.npy')))
 
 # import os
 

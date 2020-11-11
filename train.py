@@ -20,6 +20,7 @@ See frequently asked questions at: https://github.com/junyanz/pytorch-CycleGAN-a
 """
 import time
 import os
+from os import path
 
 from pytorch3d.io import save_obj
 import numpy as np
@@ -31,11 +32,21 @@ from util.visualizer import Visualizer
 from torch.utils.tensorboard import SummaryWriter
 import torch, gc
 
+
+def import_all_utilities_from_FaceGeomteryTorch_rep():
+    ## make sure path to FaceGeomteryTorch rep is mounted to facetorch
+    import sys
+    sys.path.append('/facetorch')
+
+
 # import os
 # os.seteuid(1000)
 # TODO don't forget to run container and run python -m visdom.server OR tensorboard --logdir=runs --bind_all
 if __name__ == '__main__':
 
+    import_all_utilities_from_FaceGeomteryTorch_rep()
+    from Building.Builder import Builder
+    from Building.ExperimentConfig import ExperimentConfig
     gc.collect()
     torch.cuda.empty_cache()
     # default `log_dir` is "runs" - we'll be more specific here
@@ -48,6 +59,17 @@ if __name__ == '__main__':
     dataset = create_dataset(opt)  # create a dataset given opt.dataset_mode and other options
     dataset_size = len(dataset)  # get the number of images in the dataset.
     print('The number of training images = %d' % dataset_size)
+
+
+    def propagate_factorch_config(opt):
+
+        yaml_path = path.join('/facetorch/configuration_files/master_reconstruction_arkit.yaml')
+        conf = ExperimentConfig(yaml_path=yaml_path)
+        opt.face_torch_geo = conf
+        return opt
+
+
+    opt = propagate_factorch_config(opt)
 
     model = create_model(opt)  # create a model given opt.model and other options
     model.setup(opt)  # regular setup: load and print networks; create schedulers
